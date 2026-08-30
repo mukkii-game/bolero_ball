@@ -404,7 +404,7 @@ let nextSpawnDelay = 60;
 let squadSpawnCounter = 0;
 let creditFrame = 0;
 
-let wave1SpawnedCount = 0; // 💡Wave1で生成した編隊の数（全3編隊）
+let wave1SpawnedCount = 0; // 💡Wave1で生成した編隊の数（全3編隊：緑、緑、紫）
 let carrierCounter = 0;     // 💡スピードアップの4回に1回カウント用
 
 let isInvincible = false;
@@ -940,7 +940,7 @@ function updateSquadSpawning() {
     return;
   }
 
-  // 💡Wave 1専用の厳密なスポーン処理（最初の2編隊はみどり＝FORCE_CARRIER、3つ目はノーマル、合計3編隊）
+  // 💡Wave 1専用の厳密なスポーン処理（最初の2編隊は緑＝FORCE_CARRIER、3つ目は紫＝NORMAL、合計3編隊）
   if (currentWave === 1) {
     if (wave1SpawnedCount < 3) {
       nextSpawnDelay--;
@@ -964,74 +964,73 @@ function updateSquadSpawning() {
         wave1SpawnedCount++;
       }
     }
-    return;
-  }
+  } else {
+    // 💡Wave 2〜6のスポーン処理
+    // Wave 2, 3は敵の数を半分にするため、出現間隔を広げ、編隊数も5機にする
+    let effectiveDelay = spawnIntervalSetting;
+    if (currentWave === 2) effectiveDelay = 240;
+    else if (currentWave === 3) effectiveDelay = 200;
+    else if (currentWave >= 4) effectiveDelay = Math.max(35, spawnIntervalSetting - (currentWave * 8));
 
-  // 💡Wave 2〜6のスポーン処理
-  // Wave 2, 3は敵の数を半分にするため、出現間隔を倍に＆編隊数も5機にする
-  let effectiveDelay = spawnIntervalSetting;
-  if (currentWave === 2) effectiveDelay = 220;
-  else if (currentWave === 3) effectiveDelay = 180;
-  else if (currentWave >= 4) effectiveDelay = Math.max(35, spawnIntervalSetting - (currentWave * 8));
+    nextSpawnDelay--;
+    if (nextSpawnDelay <= 0) {
+      nextSpawnDelay = effectiveDelay;
+      squadSpawnCounter++;
 
-  nextSpawnDelay--;
-  if (nextSpawnDelay <= 0) {
-    nextSpawnDelay = effectiveDelay;
-    squadSpawnCounter++;
+      const squadId = Date.now() + Math.random();
+      let patternType = "WAVE_BIG";
+      let startX = CONFIG.CANVAS_WIDTH + 24;
+      let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
 
-    const squadId = Date.now() + Math.random();
-    let patternType = "WAVE_BIG";
-    let startX = CONFIG.CANVAS_WIDTH + 24;
-    let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
-
-    // 💡Wave 3〜6は直線（STRAIGHT）をしっかり混ぜる（40%の確率で直線）
-    const randPattern = Math.random();
-    if (currentWave === 4) {
-      startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
-      startY = -24;
-      patternType = "VERTICAL_DOWN";
-    } else if (currentWave === 5) {
-      startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
-      startY = CONFIG.CANVAS_HEIGHT + 24;
-      patternType = "VERTICAL_UP";
-    } else if (currentWave === 6) {
-      const randDir = Math.random();
-      if (randDir < 0.33) { startX = CONFIG.CANVAS_WIDTH + 24; startY = Math.random() * CONFIG.CANVAS_HEIGHT; patternType = "WAVE_BIG"; }
-      else if (randDir < 0.66) { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = -24; patternType = "VERTICAL_DOWN"; }
-      else { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = CONFIG.CANVAS_HEIGHT + 24; patternType = "VERTICAL_UP"; }
-    } else {
-      // Wave 2, 3, その他: 直線を40%混ぜる
-      patternType = randPattern < 0.4 ? "STRAIGHT" : (Math.random() < 0.5 ? "WAVE_BIG" : "WAVE_SMALL");
-    }
-
-    // 💡スピードアップは「4回に1回程度」のカウント制 (carrierCounter % 4 === 0)
-    let enemyType = "NORMAL";
-    if (currentWave >= 2) {
-      const r = Math.random();
-      if (r < 0.15) {
-        enemyType = "FORCE_CARRIER"; // 緑（鉄球）
+      // 💡Wave 3〜6は直線（STRAIGHT）を40%混ぜてバランスを良くする
+      const randPattern = Math.random();
+      if (currentWave === 4) {
+        startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
+        startY = -24;
+        patternType = "VERTICAL_DOWN";
+      } else if (currentWave === 5) {
+        startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
+        startY = CONFIG.CANVAS_HEIGHT + 24;
+        patternType = "VERTICAL_UP";
+      } else if (currentWave === 6) {
+        const randDir = Math.random();
+        if (randDir < 0.33) { startX = CONFIG.CANVAS_WIDTH + 24; startY = Math.random() * CONFIG.CANVAS_HEIGHT; patternType = "WAVE_BIG"; }
+        else if (randDir < 0.66) { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = -24; patternType = "VERTICAL_DOWN"; }
+        else { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = CONFIG.CANVAS_HEIGHT + 24; patternType = "VERTICAL_UP"; }
       } else {
-        carrierCounter++;
-        if (carrierCounter % 4 === 0) {
-          enemyType = "SPEED_CARRIER"; // 黄色（4回に1回確実にスピードアップキャリア）
+        // Wave 2, 3: 直線を40%混ぜる
+        patternType = randPattern < 0.4 ? "STRAIGHT" : (Math.random() < 0.5 ? "WAVE_BIG" : "WAVE_SMALL");
+      }
+
+      // 💡スピードアップは「4回に1回程度」のカウント制 (carrierCounter % 4 === 0)
+      let enemyType = "NORMAL";
+      if (currentWave >= 2) {
+        const r = Math.random();
+        if (r < 0.12) {
+          enemyType = "FORCE_CARRIER"; // 緑（鉄球）
+        } else {
+          carrierCounter++;
+          if (carrierCounter % 4 === 0) {
+            enemyType = "SPEED_CARRIER"; // 黄色（4回に1回確実にスピードアップ）
+          }
         }
       }
+
+      // 💡Wave 2, 3は敵の数を今の半分（5機）にする。Wave 4以降は10機
+      const squadTotal = (currentWave === 2 || currentWave === 3) ? 5 : 10;
+
+      squads.push({
+        id: squadId,
+        total: squadTotal,
+        remaining: squadTotal,
+        lastSpawnFrame: gameFrame,
+        spawnedCount: 0,
+        startX: startX,
+        startY: startY,
+        patternType: patternType,
+        enemyType: enemyType
+      });
     }
-
-    // 💡Wave 2, 3は敵の数を今の半分（5機）にする
-    const squadTotal = (currentWave === 2 || currentWave === 3) ? 5 : 10;
-
-    squads.push({
-      id: squadId,
-      total: squadTotal,
-      remaining: squadTotal,
-      lastSpawnFrame: gameFrame,
-      spawnedCount: 0,
-      startX: startX,
-      startY: startY,
-      patternType: patternType,
-      enemyType: enemyType
-    });
   }
 
   for (let s of squads) {
