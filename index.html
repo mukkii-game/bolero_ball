@@ -123,6 +123,7 @@
     <button class="game-btn" id="godBtn">GOD: OFF</button>
   </div>
 
+  <!-- 数値調整モード用パネル -->
   <div id="config-panel">
     <div style="font-weight:bold; margin-bottom:10px; color:#ff9ff3;">⚙ 数値調整モード</div>
     <div class="cfg-row">
@@ -388,7 +389,7 @@ const stars = Array.from({ length: 70 }, () => ({
   alpha: 0.3 + Math.random() * 0.7
 }));
 
-let currentWave = 1; // 1から6まで
+let currentWave = 1;
 let waveState = "PLAYING";
 let restTimer = 0;
 let waveAnnouncementTimer = 0;
@@ -397,7 +398,7 @@ let waveAnnouncementText = "";
 let gameState = "TITLE";
 let pauseMenuSelection = 0;
 let scrollX = 0;
-let stageLength = 4800; // 6ウェーブ用の長めの一面
+let stageLength = 4800;
 let score = 0;
 let gameFrame = 0;
 let nextSpawnDelay = 60;
@@ -422,7 +423,7 @@ godBtn.addEventListener("click", (e) => {
 let particles = [];
 let floatingTexts = [];
 let enemies = [];
-let droppedItems = []; // フォース or スピードアップ
+let droppedItems = [];
 let squads = [];
 let enemyBullets = [];
 
@@ -434,7 +435,7 @@ const player = {
   radius: CONFIG.PLAYER_RADIUS,
   isDead: false,
   flameAnim: 0,
-  speedBonus: 0 // スピードアップアイテムによるボーナス
+  speedBonus: 0
 };
 
 let forces = [];
@@ -901,7 +902,6 @@ function updateSquadSpawning() {
 
   const progressRatio = scrollX / stageLength;
   
-  // 6ウェーブの進行制御 (0~16%, 16~33%, 33~50%, 50~66%, 66~83%, 83~95%)
   let targetWave = 1;
   if (progressRatio >= 0.16 && progressRatio < 0.33) targetWave = 2;
   else if (progressRatio >= 0.33 && progressRatio < 0.50) targetWave = 3;
@@ -925,8 +925,8 @@ function updateSquadSpawning() {
   }
 
   let effectiveDelay = spawnIntervalSetting;
-  if (currentWave === 1) effectiveDelay = 140;
-  else if (currentWave === 2) effectiveDelay = 100;
+  if (currentWave === 1) effectiveDelay = 200; // Wave1は出現間隔を長めにしてラクに
+  else if (currentWave === 2) effectiveDelay = 110;
   else if (currentWave >= 3) effectiveDelay = Math.max(35, spawnIntervalSetting - (currentWave * 8));
 
   nextSpawnDelay--;
@@ -939,8 +939,10 @@ function updateSquadSpawning() {
     let startX = CONFIG.CANVAS_WIDTH + 24;
     let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
 
-    // ウェーブごとの特殊挙動 (4:上から, 5:下から, 6:上下左右クロス)
-    if (currentWave === 4) {
+    // 💡 Wave 1は常に直線（STRAIGHT）のみにする
+    if (currentWave === 1) {
+      patternType = "STRAIGHT";
+    } else if (currentWave === 4) {
       startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
       startY = -24;
       patternType = "VERTICAL_DOWN";
@@ -962,8 +964,8 @@ function updateSquadSpawning() {
 
     squads.push({
       id: squadId,
-      total: 8,
-      remaining: 8,
+      total: 10, // 💡編隊の数（機数）は減らさず、通常の10機で爽快感をキープ
+      remaining: 10,
       lastSpawnFrame: gameFrame,
       spawnedCount: 0,
       startX: startX,
@@ -974,7 +976,7 @@ function updateSquadSpawning() {
   }
 
   for (let s of squads) {
-    const delay = 22;
+    const delay = 22; // 標準の綺麗な間隔を維持
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
       s.lastSpawnFrame = gameFrame;
       s.spawnedCount++;
@@ -1001,7 +1003,7 @@ function updateSquadSpawning() {
 
 function triggerWaveRest(nextWaveNum) {
   waveState = "REST";
-  restTimer = 90; // 1.5秒の小休止
+  restTimer = 90;
   currentWave = nextWaveNum;
   triggerAnnouncement(`REST / WAVE ${nextWaveNum}`);
 }
@@ -1054,7 +1056,6 @@ function updateEnemies() {
     }
   }
 
-  // アイテム更新（フォース or スピードアップ）
   for (let i = droppedItems.length - 1; i >= 0; i--) {
     const item = droppedItems[i];
     
@@ -1102,7 +1103,6 @@ function updateEnemies() {
     }
   }
 
-  // 敵の弾更新
   for (let i = enemyBullets.length - 1; i >= 0; i--) {
     const b = enemyBullets[i];
     b.x += b.vx;
@@ -1134,7 +1134,6 @@ function destroyEnemy(index, e) {
         const targetEdgeX = 350 + Math.random() * 220;
         const targetEdgeY = 60 + Math.random() * (CONFIG.CANVAS_HEIGHT - 120);
 
-        // 3割の確率でスピードアップ、7割の確率でフォース出現
         const isSpeedItem = Math.random() < 0.3;
         const nextNum = forces.length + 1;
 
@@ -1158,7 +1157,7 @@ function destroyEnemy(index, e) {
 }
 
 // ============================================================================
-// 8. 巨大ボス戦 (周囲を動き、弾を撃ち、奥に弱点がある仕様)
+// 8. 巨大ボス戦
 // ============================================================================
 function updateBoss() {
   if (!boss.isActive && scrollX >= stageLength) {
@@ -1172,7 +1171,6 @@ function updateBoss() {
   boss.timer++;
   boss.legAnim += 0.08;
 
-  // ボスが画面端をうねうね移動 ＆ 時々高速ダッシュ
   boss.moveAngle += 0.025;
   if (!boss.isDashing) {
     boss.x = CONFIG.CANVAS_WIDTH - 150 + Math.sin(boss.moveAngle) * 40;
@@ -1195,7 +1193,6 @@ function updateBoss() {
     }
   }
 
-  // ボスが弾を撃つ
   if (boss.timer % 70 === 0) {
     const angleToPlayer = Math.atan2(player.y - boss.y, player.x - boss.x);
     for (let offset of [-0.3, 0, 0.3]) {
@@ -1215,7 +1212,6 @@ function updateBoss() {
   const bossDrawX = boss.x;
   const bossDrawY = boss.y;
   
-  // 奥深い弱点コアの位置
   const coreX = bossDrawX - 45;
   const coreY = bossDrawY;
 
@@ -1224,7 +1220,6 @@ function updateBoss() {
     const distToCore = Math.hypot(f.x - coreX, f.y - coreY);
     if (distToCore < 38 + f.radius) {
       if (boss.isCoreOpen) {
-        // 奥の弱点に当たると超効果的！
         totalFrameDamage += CONFIG.FORCE_DAMAGE_FRAME * 2.2;
         if (gameFrame % 3 === 0) sounds.playPierceTick();
         createExplosion(coreX + (Math.random()-0.5)*25, coreY + (Math.random()-0.5)*25, "#ff6b81", 4);
@@ -1264,7 +1259,7 @@ function checkBossDefeat(bx, by) {
     }
     score += 100000;
     sounds.stopBGM();
-    gameState = "CREDITS"; // スタッフロールへ
+    gameState = "CREDITS";
   }
 }
 
@@ -1508,7 +1503,6 @@ function drawEnemies() {
     ctx.restore();
   });
 
-  // ドロップアイテム描画
   droppedItems.forEach(item => {
     ctx.save();
     ctx.translate(item.x, item.y);
@@ -1541,7 +1535,6 @@ function drawEnemies() {
     ctx.restore();
   });
 
-  // 敵の弾描画
   enemyBullets.forEach(b => {
     ctx.save();
     ctx.fillStyle = "#ff6b81";
@@ -1746,7 +1739,6 @@ function drawOverlay() {
       ctx.fillText("[ TAP / CLICK TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 440);
     }
   } else if (gameState === "CREDITS") {
-    // 💡スタッフロール画面
     ctx.fillStyle = "rgba(10, 20, 35, 0.96)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
