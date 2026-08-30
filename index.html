@@ -212,12 +212,13 @@ document.getElementById("cfgBtn").addEventListener("click", (e) => {
 });
 
 // ============================================================================
-// 2. 音響・BGMシステム
+// 2. 音響・BGMシステム（強制アンロック＆再生保証強化版）
 // ============================================================================
 class SoundSystem {
   constructor() {
     this.ctx = null;
     this.bgmAudio = null;
+    this.unlocked = false;
   }
 
   getBgm() {
@@ -237,6 +238,7 @@ class SoundSystem {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
+    this.unlocked = true;
     this.playBGM();
   }
 
@@ -244,13 +246,11 @@ class SoundSystem {
     const bgm = this.getBgm();
     if (bgm) {
       bgm.volume = 0.35;
-      if (bgm.paused) {
-        const p = bgm.play();
-        if (p !== undefined) {
-          p.catch(err => {
-            console.log("Waiting user action for BGM:", err);
-          });
-        }
+      const playPromise = bgm.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(err => {
+          console.warn("BGM auto-play deferred until explicit user gesture:", err);
+        });
       }
     }
   }
@@ -383,6 +383,17 @@ class SoundSystem {
 }
 
 const sounds = new SoundSystem();
+
+// グローバルな初回タップ/キー入力でオーディオロックを解除
+const unlockAudioHandler = () => {
+  sounds.init();
+  window.removeEventListener('click', unlockAudioHandler);
+  window.removeEventListener('keydown', unlockAudioHandler);
+  window.removeEventListener('touchstart', unlockAudioHandler);
+};
+window.addEventListener('click', unlockAudioHandler);
+window.addEventListener('keydown', unlockAudioHandler);
+window.addEventListener('touchstart', unlockAudioHandler);
 
 // ============================================================================
 // 3. ゲーム本体変数・オブジェクト
@@ -926,7 +937,7 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. 6ウェーブ制 ＆ アイテム・敵管理（Wave 3〜6出現数・頻度半減調整）
+// 7. 6ウェーブ制 ＆ アイテム・敵管理
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
@@ -980,13 +991,13 @@ function updateSquadSpawning() {
       }
     }
   } else {
-    // 💡Wave 3〜6の出現頻度を半分に（出現間隔を拡大）
+    // Wave 2〜6のスポーン
     let effectiveDelay = spawnIntervalSetting;
     if (currentWave === 2) effectiveDelay = 240;
-    else if (currentWave === 3) effectiveDelay = 360; // 頻度半減
-    else if (currentWave === 4) effectiveDelay = 300; // 頻度半減
-    else if (currentWave === 5) effectiveDelay = 260; // 頻度半減
-    else if (currentWave >= 6) effectiveDelay = 220; // 頻度半減
+    else if (currentWave === 3) effectiveDelay = 360;
+    else if (currentWave === 4) effectiveDelay = 300;
+    else if (currentWave === 5) effectiveDelay = 260;
+    else if (currentWave >= 6) effectiveDelay = 220;
 
     nextSpawnDelay--;
     if (nextSpawnDelay <= 0) {
@@ -1047,7 +1058,6 @@ function updateSquadSpawning() {
         }
       }
 
-      // 💡Wave 3〜6の敵編隊1つあたりの機数も半分（5機）に設定
       const squadTotal = 5;
 
       squads.push({
@@ -1256,7 +1266,7 @@ function destroyEnemy(index, e) {
 }
 
 // ============================================================================
-// 8. 巨大ボス戦（ボスの巡回速度・ダッシュ速度を半分に調整）
+// 8. 巨大ボス戦
 // ============================================================================
 function updateBoss() {
   if (!boss.isActive && scrollX >= stageLength) {
@@ -1270,7 +1280,6 @@ function updateBoss() {
   boss.timer++;
   boss.legAnim += 0.04;
 
-  // 💡ボスの巡回速度を半分に（0.025 -> 0.0125）
   boss.moveAngle += 0.0125;
   if (!boss.isDashing) {
     boss.x = CONFIG.CANVAS_WIDTH - 150 + Math.sin(boss.moveAngle) * 40;
@@ -1285,7 +1294,6 @@ function updateBoss() {
     const dx = boss.dashTargetX - boss.x;
     const dy = boss.dashTargetY - boss.y;
     const dist = Math.hypot(dx, dy);
-    // 💡ボスのダッシュ速度を半分に（7.0 -> 3.5）
     if (dist > 6) {
       boss.x += (dx / dist) * 3.5;
       boss.y += (dy / dist) * 3.5;
