@@ -176,7 +176,7 @@ const CONFIG = {
   
   BOSS_CORE_CYCLE: 160,
   BOSS_CORE_OPEN_TIME: 90,
-  BOSS_MAX_HP: 6000,
+  BOSS_PART_HP: 3000, // 目としっぽそれぞれのHP
   
   MASTER_VOLUME: 0.22,
   
@@ -212,13 +212,12 @@ document.getElementById("cfgBtn").addEventListener("click", (e) => {
 });
 
 // ============================================================================
-// 2. 音響・BGMシステム（強制アンロック＆再生保証強化版）
+// 2. 音響・BGMシステム
 // ============================================================================
 class SoundSystem {
   constructor() {
     this.ctx = null;
     this.bgmAudio = null;
-    this.unlocked = false;
   }
 
   getBgm() {
@@ -238,7 +237,6 @@ class SoundSystem {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    this.unlocked = true;
     this.playBGM();
   }
 
@@ -246,10 +244,10 @@ class SoundSystem {
     const bgm = this.getBgm();
     if (bgm) {
       bgm.volume = 0.35;
-      const playPromise = bgm.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(err => {
-          console.warn("BGM auto-play deferred until explicit user gesture:", err);
+      const p = bgm.play();
+      if (p !== undefined) {
+        p.catch(err => {
+          console.warn("BGM auto-play deferred:", err);
         });
       }
     }
@@ -384,7 +382,6 @@ class SoundSystem {
 
 const sounds = new SoundSystem();
 
-// グローバルな初回タップ/キー入力でオーディオロックを解除
 const unlockAudioHandler = () => {
   sounds.init();
   window.removeEventListener('click', unlockAudioHandler);
@@ -428,7 +425,9 @@ let squadSpawnCounter = 0;
 let creditFrame = 0;
 
 let wave1SpawnedCount = 0;
+let wave1ClearTimer = 0;
 let carrierCounter = 0;
+let bossAlertTriggered = false;
 
 let isInvincible = false;
 
@@ -466,18 +465,20 @@ const player = {
 
 let forces = [];
 
+// 💡ボス：目（eyeHp）としっぽ（tailHp）の2箇所部位破壊
 const boss = {
   isActive: false,
   x: CONFIG.CANVAS_WIDTH + 180,
   y: 320,
-  hp: CONFIG.BOSS_MAX_HP,
-  maxHp: CONFIG.BOSS_MAX_HP,
+  eyeHp: CONFIG.BOSS_PART_HP,
+  eyeMaxHp: CONFIG.BOSS_PART_HP,
+  tailHp: CONFIG.BOSS_PART_HP,
+  tailMaxHp: CONFIG.BOSS_PART_HP,
   timer: 0,
   isCoreOpen: false,
   legAnim: 0,
   radius: 95,
   moveAngle: 0,
-  dashCooldown: 0,
   isDashing: false,
   dashTargetX: 0,
   dashTargetY: 0
@@ -774,7 +775,9 @@ function startGame() {
   nextSpawnDelay = 60;
   squadSpawnCounter = 0;
   wave1SpawnedCount = 0;
+  wave1ClearTimer = 0;
   carrierCounter = 0;
+  bossAlertTriggered = false;
   particles = [];
   floatingTexts = [];
   enemies = [];
@@ -787,7 +790,8 @@ function startGame() {
   player.speedBonus = 0;
   player.isDead = false;
 
-  boss.hp = boss.maxHp = CONFIG.BOSS_MAX_HP;
+  boss.eyeHp = boss.eyeMaxHp = CONFIG.BOSS_PART_HP;
+  boss.tailHp = boss.tailMaxHp = CONFIG.BOSS_PART_HP;
   boss.x = CONFIG.CANVAS_WIDTH + 180;
   boss.y = 320;
   boss.isActive = false;
@@ -944,6 +948,17 @@ function updateSquadSpawning() {
 
   const progressRatio = scrollX / stageLength;
   
+  // 💡Wave 1の待ち時間短縮：3編隊出現後に敵がいなくなれば、即座にWave 2へ移行
+  if (currentWave === 1 && wave1SpawnedCount >= 3) {
+    if (enemies.length === 0) {
+      wave1ClearTimer++;
+      if (wave1ClearTimer > 40) { // 敵全滅後、わずか40フレームでWave2へ
+        scrollX = stageLength * 0.16;
+        triggerWaveRest(2);
+      }
+    }
+  }
+
   let targetWave = 1;
   if (progressRatio >= 0.16 && progressRatio < 0.33) targetWave = 2;
   else if (progressRatio >= 0.33 && progressRatio < 0.50) targetWave = 3;
@@ -951,7 +966,13 @@ function updateSquadSpawning() {
   else if (progressRatio >= 0.66 && progressRatio < 0.83) targetWave = 5;
   else if (progressRatio >= 0.83 && progressRatio < 0.96) targetWave = 6;
 
-  if (currentWave !== targetWave) {
+  // 💡ボス突入前の「BOSS ALERT !!」
+  if (progressRatio >= 0.96 && !bossAlertTriggered) {
+    bossAlertTriggered = true;
+    triggerAnnouncement("BOSS ALERT !!");
+  }
+
+  if (currentWave !== targetWave && currentWave < targetWave) {
     if (waveState === "PLAYING") {
       triggerWaveRest(targetWave);
     }
@@ -971,7 +992,7 @@ function updateSquadSpawning() {
     if (wave1SpawnedCount < 3) {
       nextSpawnDelay--;
       if (nextSpawnDelay <= 0) {
-        nextSpawnDelay = 180;
+        nextSpawnDelay = 140; // 間隔を短縮
         let enemyType = "NORMAL";
         if (wave1SpawnedCount === 0 || wave1SpawnedCount === 1) {
           enemyType = "FORCE_CARRIER";
@@ -991,7 +1012,7 @@ function updateSquadSpawning() {
       }
     }
   } else {
-    // Wave 2〜6のスポーン
+    // 💡Wave 3〜6の出現頻度を半分に（出現間隔を拡大）
     let effectiveDelay = spawnIntervalSetting;
     if (currentWave === 2) effectiveDelay = 240;
     else if (currentWave === 3) effectiveDelay = 360;
@@ -1045,8 +1066,19 @@ function updateSquadSpawning() {
         patternType = randPattern < 0.4 ? "STRAIGHT" : (Math.random() < 0.5 ? "WAVE_BIG" : "WAVE_SMALL");
       }
 
+      // 💡Wave 4, 5, 6は緑の編隊（鉄球）の出現頻度を大幅アップ（紫の代わりに緑を出す）
       let enemyType = "NORMAL";
-      if (currentWave >= 2) {
+      if (currentWave >= 4) {
+        const r = Math.random();
+        if (r < 0.65) {
+          enemyType = "FORCE_CARRIER"; // 💡Wave 4〜6は65%の確率で緑（鉄球キャリア）
+        } else {
+          carrierCounter++;
+          if (carrierCounter % 4 === 0) {
+            enemyType = "SPEED_CARRIER";
+          }
+        }
+      } else if (currentWave >= 2) {
         const r = Math.random();
         if (r < 0.14) {
           enemyType = "FORCE_CARRIER";
@@ -1058,6 +1090,7 @@ function updateSquadSpawning() {
         }
       }
 
+      // 💡Wave 3〜6の敵編隊1つあたりの機数は5機
       const squadTotal = 5;
 
       squads.push({
@@ -1266,26 +1299,26 @@ function destroyEnemy(index, e) {
 }
 
 // ============================================================================
-// 8. 巨大ボス戦
+// 8. 巨大ボス戦（目としっぽの2箇所部位破壊システム）
 // ============================================================================
 function updateBoss() {
   if (!boss.isActive && scrollX >= stageLength) {
     boss.isActive = true;
     sounds.playGet();
-    addFloatingText(CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2, "WARNING: ULTIMATE BIO BOSS");
   }
 
   if (!boss.isActive) return;
 
   boss.timer++;
-  boss.legAnim += 0.04;
+  boss.legAnim += 0.02;
 
-  boss.moveAngle += 0.0125;
+  // 💡ボスの速度を今の半分に（巡回0.00625、ダッシュ1.75）
+  boss.moveAngle += 0.00625;
   if (!boss.isDashing) {
     boss.x = CONFIG.CANVAS_WIDTH - 150 + Math.sin(boss.moveAngle) * 40;
     boss.y = 320 + Math.cos(boss.moveAngle * 1.5) * 160;
 
-    if (boss.timer % 240 === 0) {
+    if (boss.timer % 280 === 0) {
       boss.isDashing = true;
       boss.dashTargetX = 150 + Math.random() * 350;
       boss.dashTargetY = 100 + Math.random() * 440;
@@ -1294,22 +1327,23 @@ function updateBoss() {
     const dx = boss.dashTargetX - boss.x;
     const dy = boss.dashTargetY - boss.y;
     const dist = Math.hypot(dx, dy);
-    if (dist > 6) {
-      boss.x += (dx / dist) * 3.5;
-      boss.y += (dy / dist) * 3.5;
+    if (dist > 4) {
+      boss.x += (dx / dist) * 1.75;
+      boss.y += (dy / dist) * 1.75;
     } else {
       boss.isDashing = false;
     }
   }
 
-  if (boss.timer % 80 === 0) {
+  // 弾幕
+  if (boss.timer % 90 === 0) {
     const angleToPlayer = Math.atan2(player.y - boss.y, player.x - boss.x);
     for (let offset of [-0.3, 0, 0.3]) {
       enemyBullets.push({
         x: boss.x - 45,
         y: boss.y,
-        vx: Math.cos(angleToPlayer + offset) * 3.8,
-        vy: Math.sin(angleToPlayer + offset) * 3.8,
+        vx: Math.cos(angleToPlayer + offset) * 3.4,
+        vy: Math.sin(angleToPlayer + offset) * 3.4,
         radius: 6
       });
     }
@@ -1321,35 +1355,51 @@ function updateBoss() {
   const bossDrawX = boss.x;
   const bossDrawY = boss.y;
   
-  const coreX = bossDrawX - 45;
+  const coreX = bossDrawX - 45; // 目の位置
   const coreY = bossDrawY;
 
-  let totalFrameDamage = 0;
+  // しっぽの先端位置
+  const tailTipX = bossDrawX + 85 + 4 * 45 + Math.sin(boss.legAnim + 4 * Math.PI / 2) * 20;
+  const tailTipY = bossDrawY + Math.sin(boss.legAnim + 4 * 0.8) * 60;
+
   forces.forEach(f => {
-    const distToCore = Math.hypot(f.x - coreX, f.y - coreY);
-    if (distToCore < 38 + f.radius) {
-      if (boss.isCoreOpen) {
-        totalFrameDamage += CONFIG.FORCE_DAMAGE_FRAME * 2.2;
+    // 💡目（コア）への当たり判定
+    if (boss.eyeHp > 0) {
+      const distToEye = Math.hypot(f.x - coreX, f.y - coreY);
+      if (distToEye < 38 + f.radius) {
+        const dmg = boss.isCoreOpen ? CONFIG.FORCE_DAMAGE_FRAME * 2.2 : CONFIG.FORCE_DAMAGE_BODY * 0.5;
+        boss.eyeHp -= dmg;
         if (gameFrame % 3 === 0) sounds.playPierceTick();
-        createExplosion(coreX + (Math.random()-0.5)*25, coreY + (Math.random()-0.5)*25, "#ff6b81", 4);
-      } else {
-        totalFrameDamage += CONFIG.FORCE_DAMAGE_BODY * 0.5;
-        createExplosion(f.x, f.y, "#90a4ae", 1);
+        createExplosion(coreX + (Math.random()-0.5)*25, coreY + (Math.random()-0.5)*25, "#ff6b81", 3);
+        if (boss.eyeHp <= 0) {
+          boss.eyeHp = 0;
+          sounds.playEnemyDestroy();
+          createExplosion(coreX, coreY, "#ffe600", 30);
+          addFloatingText(coreX, coreY - 30, "EYE DESTROYED !!");
+        }
       }
-    } else {
-      const distToBody = Math.hypot(f.x - bossDrawX, f.y - bossDrawY);
-      if (distToBody < boss.radius + f.radius) {
-        totalFrameDamage += CONFIG.FORCE_DAMAGE_BODY;
-        createExplosion(f.x, f.y, "#ff6b81", 1);
+    }
+
+    // 💡しっぽ（尾部）への当たり判定
+    if (boss.tailHp > 0) {
+      const distToTail = Math.hypot(f.x - tailTipX, f.y - tailTipY);
+      if (distToTail < 40 + f.radius) {
+        const dmg = CONFIG.FORCE_DAMAGE_FRAME * 1.8;
+        boss.tailHp -= dmg;
+        if (gameFrame % 3 === 0) sounds.playPierceTick();
+        createExplosion(tailTipX + (Math.random()-0.5)*25, tailTipY + (Math.random()-0.5)*25, "#54a0ff", 3);
+        if (boss.tailHp <= 0) {
+          boss.tailHp = 0;
+          sounds.playEnemyDestroy();
+          createExplosion(tailTipX, tailTipY, "#54a0ff", 30);
+          addFloatingText(tailTipX, tailTipY - 30, "TAIL DESTROYED !!");
+        }
       }
     }
   });
 
-  if (totalFrameDamage > 0) {
-    boss.hp -= totalFrameDamage;
-    if (boss.isCoreOpen && gameFrame % 18 === 0) {
-      addFloatingText(coreX, coreY - 30, "CRITICAL CORE HIT!");
-    }
+  // 💡目としっぽの両方が破壊されたらボス撃破！
+  if (boss.eyeHp <= 0 && boss.tailHp <= 0) {
     checkBossDefeat(bossDrawX, bossDrawY);
   }
 
@@ -1359,8 +1409,7 @@ function updateBoss() {
 }
 
 function checkBossDefeat(bx, by) {
-  if (boss.hp <= 0 && gameState === "PLAYING") {
-    boss.hp = 0;
+  if (gameState === "PLAYING") {
     sounds.playEnemyDestroy();
     for (let i = 0; i < 120; i++) {
       createExplosion(bx + (Math.random()-0.5)*200, by + (Math.random()-0.5)*200, "#ff6b81", 5);
@@ -1709,45 +1758,54 @@ function drawEnemies() {
     ctx.lineWidth = 4;
     ctx.stroke();
 
+    // しっぽの関節描画
     for (let i = 1; i <= 4; i++) {
       const legAngle = boss.legAnim + (i * Math.PI / 2);
       const tailX = 85 + i * 45 + Math.sin(legAngle) * 20;
       const tailY = Math.sin(boss.legAnim + i * 0.8) * 60;
       
-      ctx.fillStyle = "#ff9ff3";
+      ctx.fillStyle = (i === 4 && boss.tailHp <= 0) ? "#576574" : "#ff9ff3";
       ctx.beginPath();
       ctx.arc(tailX, tailY, 42 - i * 6, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.strokeStyle = "#3a0ca3";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = (i === 4 && boss.tailHp > 0) ? "#54a0ff" : "#3a0ca3";
+      ctx.lineWidth = (i === 4 && boss.tailHp > 0) ? 3 : 2;
       ctx.stroke();
     }
 
     const coreX = -45;
     const coreY = 0;
 
-    if (boss.isCoreOpen) {
-      ctx.fillStyle = "#ff6b81";
-      ctx.shadowColor = "#ff6b81";
-      ctx.shadowBlur = 28;
-      ctx.beginPath();
-      ctx.arc(coreX, coreY, 42, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.shadowBlur = 0;
+    // 目（コア）描画
+    if (boss.eyeHp > 0) {
+      if (boss.isCoreOpen) {
+        ctx.fillStyle = "#ff6b81";
+        ctx.shadowColor = "#ff6b81";
+        ctx.shadowBlur = 28;
+        ctx.beginPath();
+        ctx.arc(coreX, coreY, 42, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.shadowBlur = 0;
 
-      ctx.fillStyle = "#ffffff";
-      ctx.beginPath();
-      ctx.arc(coreX, coreY, 22, 0, Math.PI * 2);
-      ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(coreX, coreY, 22, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.fillStyle = "#3f37c9";
+        ctx.beginPath();
+        ctx.arc(coreX, coreY, 42, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#54a0ff";
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      }
     } else {
-      ctx.fillStyle = "#3f37c9";
+      ctx.fillStyle = "#222f3e";
       ctx.beginPath();
-      ctx.arc(coreX, coreY, 42, 0, Math.PI * 2);
+      ctx.arc(coreX, coreY, 35, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "#54a0ff";
-      ctx.lineWidth = 4;
-      ctx.stroke();
     }
 
     ctx.restore();
@@ -1768,21 +1826,29 @@ function drawHUD() {
 
   const waveStr = waveState === "REST" ? "REST" : `WAVE ${currentWave}/6`;
   ctx.fillStyle = waveState === "REST" ? "#ffe600" : "#ff9ff3";
-  ctx.fillText(waveStr, 245, 32);
+  ctx.fillText(waveStr, 230, 32);
 
   const attachedCount = forces.filter(f => f.state === "ATTACHED").length;
   ctx.fillStyle = CONFIG.COLOR_HUD_TEXT;
-  ctx.fillText(`F: ${attachedCount}/${forces.length}`, 380, 32);
+  ctx.fillText(`F: ${attachedCount}/${forces.length}`, 350, 32);
 
+  // 💡目（EYE）としっぽ（TAIL）の2本のゲージ
   if (boss.isActive) {
-    const hpRatio = Math.max(0, boss.hp / boss.maxHp);
-    const bW = 100, bH = 14;
-    const bX = CONFIG.CANVAS_WIDTH - 110, bY = 19;
-    ctx.strokeStyle = "#ff6b81";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(bX, bY, bW, bH);
+    const eyeRatio = Math.max(0, boss.eyeHp / boss.eyeMaxHp);
+    const tailRatio = Math.max(0, boss.tailHp / boss.tailMaxHp);
+    
+    // EYE HP
     ctx.fillStyle = "#ff6b81";
-    ctx.fillRect(bX + 1, bY + 1, (bW - 2) * hpRatio, bH - 2);
+    ctx.font = "bold 10px monospace";
+    ctx.fillText("EYE", 455, 23);
+    ctx.strokeRect(480, 14, 60, 10);
+    ctx.fillRect(481, 15, 58 * eyeRatio, 8);
+
+    // TAIL HP
+    ctx.fillStyle = "#54a0ff";
+    ctx.fillText("TAIL", 450, 41);
+    ctx.strokeRect(480, 31, 60, 10);
+    ctx.fillRect(481, 32, 58 * tailRatio, 8);
   }
 
   ctx.restore();
@@ -1796,11 +1862,11 @@ function drawOverlay() {
     ctx.save();
     ctx.fillStyle = "rgba(15, 16, 32, 0.85)";
     ctx.fillRect(0, 220, CONFIG.CANVAS_WIDTH, 160);
-    ctx.strokeStyle = "#ff6b81";
+    ctx.strokeStyle = waveAnnouncementText.includes("ALERT") ? "#ff4757" : "#ff6b81";
     ctx.lineWidth = 4;
     ctx.strokeRect(0, 220, CONFIG.CANVAS_WIDTH, 160);
 
-    ctx.fillStyle = "#ffe600";
+    ctx.fillStyle = waveAnnouncementText.includes("ALERT") ? "#ff4757" : "#ffe600";
     ctx.shadowColor = "#ff9ff3";
     ctx.shadowBlur = 25;
     ctx.font = "bold 52px monospace";
@@ -1838,7 +1904,7 @@ function drawOverlay() {
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "12px monospace";
     ctx.fillText("・緑: 鉄球追加 / 黄: SPEED UP / 紫: 通常敵", CONFIG.CANVAS_WIDTH / 2, 420);
-    ctx.fillText("・全6ウェーブ（後半＆ボス戦は激しく変化）", CONFIG.CANVAS_WIDTH / 2, 445);
+    ctx.fillText("・ボスの【目】と【しっぽ】の両方を破壊せよ！", CONFIG.CANVAS_WIDTH / 2, 445);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
