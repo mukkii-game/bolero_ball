@@ -145,7 +145,7 @@
 </div>
 
 <div id="instructions">
-  移動: <span>WASD</span> / 発射・回収: <span>Spaceキー</span> (スマホ: <span>左ドラッグ</span> / <span>右タップ</span>)
+  移動: <span>WASD / 矢印キー</span> | 発射・回収: <span>Space / Enter / 左右クリック</span> (スマホ: <span>左ドラッグ</span> / <span>右タップ</span>)
 </div>
 
 <audio id="bgmAudio" src="Ravel-Borelo.mp3" loop preload="auto" playsinline></audio>
@@ -212,12 +212,13 @@ document.getElementById("cfgBtn").addEventListener("click", (e) => {
 });
 
 // ============================================================================
-// 2. 音響・BGMシステム（長めの気持ちいいクリアジングル搭載）
+// 2. 音響・BGMシステム
 // ============================================================================
 class SoundSystem {
   constructor() {
     this.ctx = null;
     this.bgmAudio = null;
+    this.unlocked = false;
   }
 
   getBgm() {
@@ -237,17 +238,17 @@ class SoundSystem {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    this.playBGM();
+    this.unlocked = true;
   }
 
   playBGM() {
     const bgm = this.getBgm();
     if (bgm) {
       bgm.volume = 0.35;
-      const p = bgm.play();
-      if (p !== undefined) {
-        p.catch(err => {
-          console.warn("BGM auto-play deferred:", err);
+      const playPromise = bgm.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(err => {
+          console.warn("BGM play error:", err);
         });
       }
     }
@@ -311,19 +312,18 @@ class SoundSystem {
     });
   }
 
-  // 💡ボス撃破時の気持ちいい長めのクリアジングル (アルペジオ＋ハーモニー)
   playClearJingle() {
     if (!this.ctx) return;
     const baseTime = this.ctx.currentTime;
     const melody = [
-      { f: 523.25, d: 0.12, t: 0.0 },   // C5
-      { f: 659.25, d: 0.12, t: 0.12 },  // E5
-      { f: 783.99, d: 0.12, t: 0.24 },  // G5
-      { f: 1046.50, d: 0.24, t: 0.36 }, // C6
-      { f: 880.00, d: 0.14, t: 0.60 },  // A5
-      { f: 1046.50, d: 0.14, t: 0.74 }, // C6
-      { f: 1174.66, d: 0.14, t: 0.88 }, // D6
-      { f: 1318.51, d: 1.8, t: 1.05 }   // E6 (ロングトーン)
+      { f: 523.25, d: 0.12, t: 0.0 },
+      { f: 659.25, d: 0.12, t: 0.12 },
+      { f: 783.99, d: 0.12, t: 0.24 },
+      { f: 1046.50, d: 0.24, t: 0.36 },
+      { f: 880.00, d: 0.14, t: 0.60 },
+      { f: 1046.50, d: 0.14, t: 0.74 },
+      { f: 1174.66, d: 0.14, t: 0.88 },
+      { f: 1318.51, d: 1.8, t: 1.05 }
     ];
 
     melody.forEach(note => {
@@ -340,7 +340,6 @@ class SoundSystem {
       osc.stop(startTime + note.d);
     });
 
-    // バックの華やかなメジャーコード和音
     [523.25, 659.25, 783.99, 1046.50].forEach(freq => {
       const startTime = baseTime + 1.05;
       const osc = this.ctx.createOscillator();
@@ -528,7 +527,6 @@ const player = {
 
 let forces = [];
 
-// 💡ボス：撃破時の3秒間点滅・連続爆発用タイマーを搭載
 const boss = {
   isActive: false,
   isDying: false,
@@ -565,7 +563,7 @@ let rightTouchStartY = 0;
 let rightTouchMoved = false;
 
 // ============================================================================
-// 4. 入力管理（移動以外のどのボタンでもSpaceと同じ効果で発射・回収可能に）
+// 4. 入力管理（Shift / Ctrl / Alt 等の完全除外 ＆ 厳密な操作判定）
 // ============================================================================
 container.addEventListener("contextmenu", e => e.preventDefault());
 
@@ -581,6 +579,7 @@ function triggerGameAction() {
   }
   if (gameState === "CREDITS") {
     if (creditFrame >= 300) {
+      sounds.stopBGM();
       gameState = "TITLE";
     }
     return;
@@ -598,11 +597,14 @@ function triggerGameAction() {
   handleForceAction();
 }
 
+// 💡マウス操作：左クリック(button===0) または 右クリック(button===2) のみ
 container.addEventListener("mousedown", (e) => {
   if (e.target.closest('#config-panel') || e.target === godBtn || e.target.id === 'cfgBtn') return;
   e.preventDefault();
   window.focus();
-  triggerGameAction();
+  if (e.button === 0 || e.button === 2) {
+    triggerGameAction();
+  }
 });
 
 canvas.addEventListener("touchstart", (e) => {
@@ -712,30 +714,45 @@ canvas.addEventListener("touchcancel", (e) => {
   player.vy = 0;
 }, { passive: false });
 
+// 移動キー判定
 function isUpKey(e) {
-  const k = (e.key || "").toLowerCase();
-  return e.code === "ArrowUp" || e.code === "KeyW" || k === "w";
+  return e.code === "KeyW" || e.code === "ArrowUp" || (e.key && e.key.toLowerCase() === "w");
 }
 function isDownKey(e) {
-  const k = (e.key || "").toLowerCase();
-  return e.code === "ArrowDown" || e.code === "KeyS" || k === "s";
+  return e.code === "KeyS" || e.code === "ArrowDown" || (e.key && e.key.toLowerCase() === "s");
 }
 function isLeftKey(e) {
-  const k = (e.key || "").toLowerCase();
-  return e.code === "ArrowLeft" || e.code === "KeyA" || k === "a";
+  return e.code === "KeyA" || e.code === "ArrowLeft" || (e.key && e.key.toLowerCase() === "a");
 }
 function isRightKey(e) {
-  const k = (e.key || "").toLowerCase();
-  return e.code === "ArrowRight" || e.code === "KeyD" || k === "d";
+  return e.code === "KeyD" || e.code === "ArrowRight" || (e.key && e.key.toLowerCase() === "d");
+}
+
+// 💡攻撃・決定キー（SpaceまたはEnterのみ）
+function isActionKey(e) {
+  return e.code === "Space" || e.code === "Enter" || e.code === "NumpadEnter" || e.key === " " || e.key === "Enter";
+}
+
+// 💡禁止キー（Shift, Ctrl, Alt, Meta/Windows/Command等）の完全除外
+function isModifierKey(e) {
+  return e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || 
+         e.key === "Shift" || e.key === "Control" || e.key === "Alt" || e.key === "Meta" ||
+         e.code.startsWith("Shift") || e.code.startsWith("Control") || e.code.startsWith("Alt") || e.code.startsWith("Meta");
 }
 
 window.addEventListener("keydown", (e) => {
+  // 💡Shift / Ctrl / Alt / Windowsキーが関与している場合はゲーム入力を完全無視
+  if (isModifierKey(e)) {
+    return;
+  }
+
   let handled = false;
   sounds.init();
 
   if (e.code === "Escape" || (e.key || "").toLowerCase() === "escape") {
     if (gameState === "PLAYING") {
       gameState = "PAUSE";
+      sounds.stopBGM();
       pauseMenuSelection = 0;
       handled = true;
     } else if (gameState === "PAUSE") {
@@ -750,7 +767,7 @@ window.addEventListener("keydown", (e) => {
       pauseMenuSelection = 1 - pauseMenuSelection;
       handled = true;
     }
-    if (e.code === "Enter" || e.code === "Space" || (!isUpKey(e) && !isDownKey(e) && !isLeftKey(e) && !isRightKey(e) && e.code !== "Escape")) {
+    if (isActionKey(e)) {
       if (pauseMenuSelection === 1) {
         sounds.stopBGM();
         gameState = "TITLE";
@@ -769,8 +786,10 @@ window.addEventListener("keydown", (e) => {
   }
 
   if (gameState === "TITLE" || gameState === "GAMEOVER" || gameState === "CREDITS") {
-    triggerGameAction();
-    handled = true;
+    if (isActionKey(e)) {
+      triggerGameAction();
+      handled = true;
+    }
   } else {
     if (isUpKey(e)) { keys.up = true; handled = true; }
     if (isDownKey(e)) { keys.down = true; handled = true; }
@@ -780,8 +799,8 @@ window.addEventListener("keydown", (e) => {
     if (e.code === "KeyI" || (e.key || "").toLowerCase() === "i") {
       toggleGodMode();
       handled = true;
-    } else if (!isUpKey(e) && !isDownKey(e) && !isLeftKey(e) && !isRightKey(e) && e.code !== "Escape") {
-      // 💡移動・ESC・GOD切り替え以外のどのボタンでもSpaceと同じ効果（発射・回収）
+    } else if (isActionKey(e)) {
+      // 💡Space または Enter のみで発射・回収
       if (!keys.action && gameState === "PLAYING") {
         handleForceAction();
       }
@@ -798,7 +817,7 @@ window.addEventListener("keyup", (e) => {
   if (isDownKey(e)) keys.down = false;
   if (isLeftKey(e)) keys.left = false;
   if (isRightKey(e)) keys.right = false;
-  keys.action = false;
+  if (isActionKey(e)) keys.action = false;
 });
 
 // ============================================================================
@@ -1257,7 +1276,6 @@ function updateEnemies() {
     }
   }
 
-  // ドロップアイテム同士の重なり防止
   for (let a = 0; a < droppedItems.length; a++) {
     for (let b = a + 1; b < droppedItems.length; b++) {
       const itemA = droppedItems[a];
@@ -1404,7 +1422,7 @@ function destroyEnemy(index, e) {
 }
 
 // ============================================================================
-// 8. 巨大ボス戦（3秒間の点滅＆連続爆発演出）
+// 8. 巨大ボス戦
 // ============================================================================
 function updateBoss() {
   if (!boss.isActive && scrollX >= stageLength) {
@@ -1414,23 +1432,21 @@ function updateBoss() {
 
   if (!boss.isActive) return;
 
-  // 💡ボス死亡中の3秒間演出処理
   if (boss.isDying) {
     boss.deathTimer--;
-    // 体のあちこちで連続爆発
     if (gameFrame % 3 === 0) {
       sounds.playEnemyDestroy();
       const ex = boss.x + (Math.random() - 0.5) * 220;
       const ey = boss.y + (Math.random() - 0.5) * 180;
       createExplosion(ex, ey, Math.random() < 0.5 ? "#ff6b81" : "#ffe600", 6);
     }
-    // 3秒経過後、特大爆発とともにスタッフロールへ
     if (boss.deathTimer <= 0) {
       for (let i = 0; i < 140; i++) {
         createExplosion(boss.x + (Math.random()-0.5)*260, boss.y + (Math.random()-0.5)*220, "#ff4757", 5);
         createExplosion(boss.x + (Math.random()-0.5)*260, boss.y + (Math.random()-0.5)*220, "#ffe600", 5);
       }
       boss.isActive = false;
+      sounds.stopBGM();
       gameState = "CREDITS";
       creditFrame = 0;
     }
@@ -1534,12 +1550,11 @@ function updateBoss() {
   }
 }
 
-// 💡ボス撃破トリガー：長めのクリア音 ＆ 3秒間の点滅・連続爆発開始
 function triggerBossDefeat() {
   if (boss.isDying) return;
   boss.isDying = true;
-  boss.deathTimer = 180; // 3秒間（60fps × 3）
-  enemyBullets = []; // 画面上の敵弾を消去
+  boss.deathTimer = 180;
+  enemyBullets = [];
   sounds.stopBGM();
   sounds.playClearJingle();
   addFloatingText(CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2, "BOSS DESTROYED !!");
@@ -1925,7 +1940,6 @@ function drawEnemies() {
     ctx.save();
     ctx.translate(bossDrawX, bossDrawY);
 
-    // 💡ボス死亡中の激しい点滅処理（白・赤フラッシュ）
     if (boss.isDying) {
       const flash = Math.floor(boss.deathTimer / 4) % 2 === 0;
       ctx.fillStyle = flash ? "#ffffff" : "#ff4757";
@@ -1982,7 +1996,7 @@ function drawHUD() {
   ctx.lineWidth = 2;
   ctx.strokeRect(0, 0, CONFIG.CANVAS_WIDTH, 56);
 
-  // 自機HP：倍サイズミニ自機
+  // 自機HPアイコン
   for (let h = 0; h < player.maxHp; h++) {
     const iconX = 26 + h * 34;
     const iconY = 28;
@@ -2057,12 +2071,11 @@ function drawOverlay() {
     ctx.restore();
   }
 
-  // 💡タイトル画面：巨大・極太文字 ＆ 主人公と鉄球のイラスト描画 ＆ 説明文更新
   if (gameState === "TITLE") {
     ctx.fillStyle = "rgba(15, 16, 32, 0.95)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
-    // 巨大・超極太タイトルロゴ
+    // 巨大極太タイトル
     ctx.save();
     ctx.fillStyle = "#ff6b81";
     ctx.shadowColor = "#ff9ff3";
@@ -2074,12 +2087,11 @@ function drawOverlay() {
     ctx.strokeText("ま～るタイプ", CONFIG.CANVAS_WIDTH / 2, 175);
     ctx.restore();
 
-    // 💡主人公（自機）と鉄球の添え絵
+    // 自機と鉄球のイラスト
     ctx.save();
     const illustX = CONFIG.CANVAS_WIDTH / 2 - 25;
     const illustY = 265;
     
-    // 自機（噴射炎つき）
     const flameLen = 16 + Math.sin(Date.now() * 0.015) * 6;
     ctx.fillStyle = "#ff6b81";
     ctx.beginPath();
@@ -2105,7 +2117,6 @@ function drawOverlay() {
     ctx.arc(illustX, illustY, 34, 0, Math.PI * 2);
     ctx.stroke();
 
-    // 鉄球（1個付属）
     const forceIllustX = illustX + 68;
     const forceIllustY = illustY;
     const grad = ctx.createRadialGradient(
@@ -2144,7 +2155,7 @@ function drawOverlay() {
     ctx.font = "bold 20px monospace";
     ctx.fillText("▶ ゲーム開始 / スタート", CONFIG.CANVAS_WIDTH / 2, 380);
 
-    // 💡操作説明（ご指定のフォーマット）
+    // 操作説明
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "bold 13px monospace";
     ctx.fillText("移動: WASD  発射/回収: Spaceキー", CONFIG.CANVAS_WIDTH / 2, 445);
@@ -2158,7 +2169,7 @@ function drawOverlay() {
     if (blink) {
       ctx.fillStyle = "#ffe600";
       ctx.font = "bold 16px monospace";
-      ctx.fillText("[ PRESS ANY BUTTON TO PLAY ]", CONFIG.CANVAS_WIDTH / 2, 565);
+      ctx.fillText("[ SPACE / ENTER / CLICK TO PLAY ]", CONFIG.CANVAS_WIDTH / 2, 565);
     }
   } else if (gameState === "PAUSE") {
     ctx.fillStyle = "rgba(15, 16, 32, 0.88)";
@@ -2178,24 +2189,24 @@ function drawOverlay() {
 
     ctx.fillStyle = "#ff9ff3";
     ctx.font = "14px monospace";
-    ctx.fillText("[ ESCキー または タップで決定 ]", CONFIG.CANVAS_WIDTH / 2, 480);
+    ctx.fillText("[ ESCキー または タップ/Spaceで決定 ]", CONFIG.CANVAS_WIDTH / 2, 480);
   } else if (gameState === "GAMEOVER") {
     ctx.fillStyle = "rgba(35, 10, 15, 0.9)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
     ctx.fillStyle = "#ff6b81";
-    ctx.font = "bold 44px monospace";
+    ctx.font = "bold 38px monospace";
     ctx.fillText("GAME OVER", CONFIG.CANVAS_WIDTH / 2, 270);
 
     ctx.fillStyle = "#54a0ff";
-    ctx.font = "bold 22px monospace";
-    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 340);
+    ctx.font = "bold 20px monospace";
+    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 320);
 
     const blink = Math.floor(Date.now() / 350) % 2 === 0;
     if (blink) {
       ctx.fillStyle = "#ffe66d";
       ctx.font = "bold 16px monospace";
-      ctx.fillText("[ PRESS ANY BUTTON TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 450);
+      ctx.fillText("[ SPACE / ENTER / CLICK TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 450);
     }
   } else if (gameState === "CREDITS") {
     ctx.fillStyle = "rgba(10, 20, 35, 0.96)";
@@ -2218,7 +2229,7 @@ function drawOverlay() {
       if (blink) {
         ctx.fillStyle = "#ffe600";
         ctx.font = "bold 20px monospace";
-        ctx.fillText("- PRESS ANY BUTTON -", CONFIG.CANVAS_WIDTH / 2, 500);
+        ctx.fillText("- PRESS SPACE / ENTER / CLICK -", CONFIG.CANVAS_WIDTH / 2, 500);
       }
     }
   }
