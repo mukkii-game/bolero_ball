@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>まあるぃタイプ</title>
+  <title>ま～るタイプ</title>
   <style>
     * {
       box-sizing: border-box;
@@ -102,7 +102,8 @@
   [ 操作 ]: <span>左半分ドラッグ</span> (移動) | <span>右半分タップ</span> (鉄球発射・帰還) | <span>GODボタン / Iキー</span> (無敵切替)
 </div>
 
-<audio id="bgmAudio" src="Ravel-Borelo.mp3" loop preload="auto"></audio>
+<!-- 💡アップロードしていただいたRavel-Borelo_2.mp3を使用 -->
+<audio id="bgmAudio" src="Ravel-Borelo_2.mp3" loop preload="auto"></audio>
 
 <script>
 // ============================================================================
@@ -125,7 +126,7 @@ const CONFIG = {
   FORCE_DAMAGE_BODY: 0.8,
   
   ENEMY_RADIUS: 18,
-  FLYER_SPEED_BASE: 0.95, // 💡敵速度を元に戻し、適正なテンポに調整
+  FLYER_SPEED_BASE: 1.15,
   
   BOSS_CORE_CYCLE: 160,
   BOSS_CORE_OPEN_TIME: 90,
@@ -150,7 +151,7 @@ class SoundSystem {
     this.ctx = null;
     this.bgmAudio = document.getElementById("bgmAudio");
     if (this.bgmAudio) {
-      this.bgmAudio.volume = 0.25; // 💡BGM音量をしっかり聞こえるように調整
+      this.bgmAudio.volume = 0.4;
     }
   }
 
@@ -170,7 +171,7 @@ class SoundSystem {
   playBGM() {
     if (this.bgmAudio) {
       this.bgmAudio.play().catch(err => {
-        console.log("BGM auto-play blocked or waiting user interaction:", err);
+        console.log("BGM playback waiting user interaction:", err);
       });
     }
   }
@@ -399,7 +400,6 @@ const keys = {
   action: false
 };
 
-// スマホタッチトラッキング管理
 let leftTouchId = null;
 let leftTouchStartX = 0;
 let leftTouchStartY = 0;
@@ -791,7 +791,7 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. 編隊＆キャリア敵制御 (2面以降も正常にスポーン)
+// 7. 編隊＆キャリア敵制御
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
@@ -799,13 +799,12 @@ function updateSquadSpawning() {
   if (squads.length === 0 && enemies.length === 0) {
     nextSpawnDelay--;
     if (nextSpawnDelay <= 0) {
-      nextSpawnDelay = 180;
+      nextSpawnDelay = 130;
       squadSpawnCounter++;
 
       const squadId = Date.now() + Math.random();
       let patternType = "WAVE_BIG";
       
-      // 最初の2編隊は必ず直線移動
       if (squadSpawnCounter <= 2) {
         patternType = "STRAIGHT";
       } else {
@@ -848,7 +847,7 @@ function updateSquadSpawning() {
   }
 
   for (let s of squads) {
-    const delay = 26;
+    const delay = 22;
 
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
       s.lastSpawnFrame = gameFrame;
@@ -1228,8 +1227,7 @@ function drawPlayer(x, y) {
   ctx.translate(x, y);
 
   if (gameState !== "DYING") {
-    // 💡ロケット推進：移動している方向の「反対側」に炎（ジェット噴射）を描画
-    let moveAngle = Math.PI; // デフォルトは後方(左)
+    let moveAngle = Math.PI;
     const speedSq = player.vx * player.vx + player.vy * player.vy;
     if (speedSq > 0.01) {
       moveAngle = Math.atan2(player.vy, player.vx) + Math.PI;
@@ -1492,20 +1490,21 @@ function drawOverlay() {
     ctx.fillStyle = "rgba(15, 16, 32, 0.92)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
+    // 💡タイトル文字をさらに枠ギリギリまで大きく極太に！ (72px)
     ctx.fillStyle = "#ff6b81";
     ctx.shadowColor = "#ff9ff3";
-    ctx.shadowBlur = 25;
-    ctx.font = "bold 56px monospace";
-    ctx.fillText("まあるぃタイプ", CONFIG.CANVAS_WIDTH / 2, 210);
+    ctx.shadowBlur = 30;
+    ctx.font = "bold 72px monospace";
+    ctx.fillText("ま～るタイプ", CONFIG.CANVAS_WIDTH / 2, 210);
     ctx.shadowBlur = 0;
 
     ctx.fillStyle = "#54a0ff";
-    ctx.font = "bold 16px monospace";
-    ctx.fillText("✨ 鉄球オプションがピタリと重なる新感覚シューティング ✨", CONFIG.CANVAS_WIDTH / 2, 275);
+    ctx.font = "bold 15px monospace";
+    ctx.fillText("✨ 鉄球オプションがピタリと重なる新感覚シューティング ✨", CONFIG.CANVAS_WIDTH / 2, 280);
 
     ctx.fillStyle = "#ff6b81";
     ctx.beginPath();
-    ctx.roundRect(CONFIG.CANVAS_WIDTH / 2 - 160, 315, 320, 60, 30);
+    ctx.roundRect(CONFIG.CANVAS_WIDTH / 2 - 160, 320, 320, 58, 29);
     ctx.fill();
     ctx.strokeStyle = "#ffe600";
     ctx.lineWidth = 3;
@@ -1513,12 +1512,12 @@ function drawOverlay() {
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 20px monospace";
-    ctx.fillText("▶ ゲーム開始 / スタート", CONFIG.CANVAS_WIDTH / 2, 351);
+    ctx.fillText("▶ ゲーム開始 / スタート", CONFIG.CANVAS_WIDTH / 2, 355);
 
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "13px monospace";
-    ctx.fillText("・スマホ: 左ドラッグ(移動) / 右タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 420);
-    ctx.fillText("・右上 GODボタン / Iキー で無敵切替可能", CONFIG.CANVAS_WIDTH / 2, 450);
+    ctx.fillText("・スマホ: 左ドラッグ(移動) / 右タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 425);
+    ctx.fillText("・右上 GODボタン / Iキー で無敵切替可能", CONFIG.CANVAS_WIDTH / 2, 455);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
