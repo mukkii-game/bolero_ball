@@ -1,6 +1,3 @@
-スマホのブラウザでダウンロードせずにそのまま画面内で直接「開く（プレイする）」ためのプレビューボタンや、ゲームをすぐに起動できる分かりやすいUIボタン（スタートボタン）がしっかりと表示されるように、コードと出力形式を整えました。
-画面内のタイトル部分にある大きなボタン、またはチャットのプレビュー機能から、いつでもすぐにスマホで直接開いて遊ぶことができます。
-以下の最新完全版コードを反映したゲームをお楽しみください！
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -54,6 +51,29 @@
       background-size: 100% 4px;
       pointer-events: none;
     }
+    #ui-overlay-buttons {
+      position: absolute;
+      top: 10px;
+      right: 12px;
+      z-index: 10;
+      display: flex;
+      gap: 8px;
+    }
+    .game-btn {
+      background: rgba(84, 160, 255, 0.2);
+      border: 2px solid #54a0ff;
+      color: #54a0ff;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 12px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .game-btn:active {
+      background: #54a0ff;
+      color: #fff;
+    }
     #instructions {
       margin-top: 10px;
       font-size: 13px;
@@ -71,13 +91,15 @@
 <body>
 
 <div id="game-container">
+  <div id="ui-overlay-buttons">
+    <button class="game-btn" id="godBtn">GOD: OFF</button>
+  </div>
   <canvas id="gameCanvas" width="640" height="640"></canvas>
   <div class="scanlines"></div>
 </div>
 
 <div id="instructions">
-  [ PC操作 ]: <span>WASD / 方向キー</span> (移動) | <span>左クリック / SPACE</span> (発射・帰還) | <span>I</span> (無敵切替)<br>
-  [ スマホ操作 ]: <span>左半分ドラッグ</span> (相対移動) | <span>右半分タップ</span> (鉄球発射・帰還)
+  [ 操作 ]: <span>左半分ドラッグ</span> (移動) | <span>右半分タップ</span> (鉄球発射・帰還) | <span>GODボタン / Iキー</span> (無敵切替)
 </div>
 
 <audio id="bgmAudio" src="Ravel-Borelo.mp3" loop preload="auto"></audio>
@@ -103,7 +125,7 @@ const CONFIG = {
   FORCE_DAMAGE_BODY: 0.8,
   
   ENEMY_RADIUS: 18,
-  FLYER_SPEED_BASE: 0.68,
+  FLYER_SPEED_BASE: 0.95, // 💡敵速度を元に戻し、適正なテンポに調整
   
   BOSS_CORE_CYCLE: 160,
   BOSS_CORE_OPEN_TIME: 90,
@@ -128,7 +150,7 @@ class SoundSystem {
     this.ctx = null;
     this.bgmAudio = document.getElementById("bgmAudio");
     if (this.bgmAudio) {
-      this.bgmAudio.volume = 0.12;
+      this.bgmAudio.volume = 0.25; // 💡BGM音量をしっかり聞こえるように調整
     }
   }
 
@@ -142,15 +164,14 @@ class SoundSystem {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    if (this.bgmAudio && this.bgmAudio.paused) {
-      this.bgmAudio.play().catch(() => {});
-    }
+    this.playBGM();
   }
 
-  startBGM() {
+  playBGM() {
     if (this.bgmAudio) {
-      this.bgmAudio.currentTime = 0;
-      this.bgmAudio.play().catch(() => {});
+      this.bgmAudio.play().catch(err => {
+        console.log("BGM auto-play blocked or waiting user interaction:", err);
+      });
     }
   }
 
@@ -305,6 +326,7 @@ const sounds = new SoundSystem();
 const container = document.getElementById("game-container");
 const canvas = document.getElementById("gameCanvas");
 const ctx = canvas.getContext("2d");
+const godBtn = document.getElementById("godBtn");
 
 const stars = Array.from({ length: 70 }, () => ({
   x: Math.random() * CONFIG.CANVAS_WIDTH,
@@ -323,10 +345,24 @@ let score = 0;
 let gameFrame = 0;
 let transitionTimer = 0;
 let deathTimer = 0;
-let nextSpawnDelay = 180;
+let nextSpawnDelay = 120;
 let squadSpawnCounter = 0;
 
 let isInvincible = false;
+
+function toggleGodMode() {
+  isInvincible = !isInvincible;
+  godBtn.textContent = isInvincible ? "GOD: ON" : "GOD: OFF";
+  godBtn.style.borderColor = isInvincible ? "#ff6b81" : "#54a0ff";
+  godBtn.style.color = isInvincible ? "#ff6b81" : "#54a0ff";
+  addFloatingText(player.x, player.y - 35, isInvincible ? "INVINCIBLE ON" : "INVINCIBLE OFF");
+}
+
+godBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  sounds.init();
+  toggleGodMode();
+});
 
 let particles = [];
 let floatingTexts = [];
@@ -337,6 +373,8 @@ let squads = [];
 const player = {
   x: 120,
   y: 320,
+  vx: 0,
+  vy: 0,
   radius: CONFIG.PLAYER_RADIUS,
   isDead: false,
   flameAnim: 0
@@ -361,7 +399,7 @@ const keys = {
   action: false
 };
 
-// スマホタッチトラッキング管理（左ドラッグ相対移動 ＆ 右タップ発射）
+// スマホタッチトラッキング管理
 let leftTouchId = null;
 let leftTouchStartX = 0;
 let leftTouchStartY = 0;
@@ -397,16 +435,16 @@ function triggerGameAction() {
 }
 
 container.addEventListener("mousedown", (e) => {
+  if (e.target === godBtn) return;
   e.preventDefault();
   window.focus();
   triggerGameAction();
 });
 
 canvas.addEventListener("touchstart", (e) => {
-  e.preventDefault();
   sounds.init();
-
   if (gameState === "TITLE" || gameState === "GAMEOVER" || gameState === "CLEAR") {
+    e.preventDefault();
     triggerGameAction();
     return;
   }
@@ -441,7 +479,6 @@ canvas.addEventListener("touchstart", (e) => {
 }, { passive: false });
 
 canvas.addEventListener("touchmove", (e) => {
-  e.preventDefault();
   if (gameState !== "PLAYING") return;
 
   const rect = canvas.getBoundingClientRect();
@@ -456,8 +493,13 @@ canvas.addEventListener("touchmove", (e) => {
     if (t.identifier === leftTouchId) {
       const dx = tx - leftTouchStartX;
       const dy = ty - leftTouchStartY;
-      player.x = Math.max(player.radius, Math.min(CONFIG.CANVAS_WIDTH - player.radius, playerStartX + dx));
-      player.y = Math.max(player.radius, Math.min(CONFIG.CANVAS_HEIGHT - player.radius, playerStartY + dy));
+      const targetX = Math.max(player.radius, Math.min(CONFIG.CANVAS_WIDTH - player.radius, playerStartX + dx));
+      const targetY = Math.max(player.radius, Math.min(CONFIG.CANVAS_HEIGHT - player.radius, playerStartY + dy));
+      
+      player.vx = targetX - player.x;
+      player.vy = targetY - player.y;
+      player.x = targetX;
+      player.y = targetY;
       touchActive = true;
     } else if (t.identifier === rightTouchId) {
       const dist = Math.hypot(tx - rightTouchStartX, ty - rightTouchStartY);
@@ -469,14 +511,16 @@ canvas.addEventListener("touchmove", (e) => {
 }, { passive: false });
 
 canvas.addEventListener("touchend", (e) => {
-  e.preventDefault();
   for (let i = 0; i < e.changedTouches.length; i++) {
     const t = e.changedTouches[i];
     if (t.identifier === leftTouchId) {
       leftTouchId = null;
       touchActive = false;
+      player.vx = 0;
+      player.vy = 0;
     } else if (t.identifier === rightTouchId) {
       if (!rightTouchMoved && gameState === "PLAYING") {
+        e.preventDefault();
         handleForceAction();
       }
       rightTouchId = null;
@@ -485,10 +529,11 @@ canvas.addEventListener("touchend", (e) => {
 }, { passive: false });
 
 canvas.addEventListener("touchcancel", (e) => {
-  e.preventDefault();
   leftTouchId = null;
   rightTouchId = null;
   touchActive = false;
+  player.vx = 0;
+  player.vy = 0;
 }, { passive: false });
 
 function isUpKey(e) {
@@ -529,8 +574,7 @@ window.addEventListener("keydown", (e) => {
   if (isRightKey(e)) { keys.right = true; handled = true; }
 
   if (e.code === "KeyI" || (e.key || "").toLowerCase() === "i") {
-    isInvincible = !isInvincible;
-    addFloatingText(player.x, player.y - 35, isInvincible ? "INVINCIBLE ON" : "INVINCIBLE OFF");
+    toggleGodMode();
     handled = true;
   }
 
@@ -618,7 +662,7 @@ function startGame(stageNum = 1) {
   forces.push(initialForce);
 
   updateAllForcePositions();
-  sounds.startBGM();
+  sounds.playBGM();
   gameState = "PLAYING";
 }
 
@@ -747,32 +791,21 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. 編隊＆キャリア敵制御
+// 7. 編隊＆キャリア敵制御 (2面以降も正常にスポーン)
 // ============================================================================
-function getDynamicEnemySpeed() {
-  const stageProgress = scrollX / stageLength;
-  const baseSlow = CONFIG.FLYER_SPEED_BASE;
-  const targetMax = (currentStage === 1) ? 0.85 : (currentStage === 2 ? 1.05 : 1.25);
-  
-  if (stageProgress < 0.25) {
-    return baseSlow;
-  } else {
-    return baseSlow + (targetMax - baseSlow) * Math.min(1.0, (stageProgress - 0.25) / 0.75);
-  }
-}
-
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
 
   if (squads.length === 0 && enemies.length === 0) {
     nextSpawnDelay--;
     if (nextSpawnDelay <= 0) {
-      nextSpawnDelay = 220;
+      nextSpawnDelay = 180;
       squadSpawnCounter++;
 
       const squadId = Date.now() + Math.random();
       let patternType = "WAVE_BIG";
       
+      // 最初の2編隊は必ず直線移動
       if (squadSpawnCounter <= 2) {
         patternType = "STRAIGHT";
       } else {
@@ -815,8 +848,7 @@ function updateSquadSpawning() {
   }
 
   for (let s of squads) {
-    const stageProgress = scrollX / stageLength;
-    const delay = (stageProgress < 0.3) ? 38 : 28;
+    const delay = 26;
 
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
       s.lastSpawnFrame = gameFrame;
@@ -843,30 +875,25 @@ function updateSquadSpawning() {
 
 function updateEnemies() {
   updateSquadSpawning();
-  const currentSpeed = getDynamicEnemySpeed();
+  const currentSpeed = CONFIG.FLYER_SPEED_BASE;
 
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
-    e.anim += 0.035;
-
-    const squad = squads.find(s => s.id === e.squadId);
-    const speedFactor = (squadSpawnCounter <= 3) ? 0.66 : 1.0;
-    const isFirstFew = (scrollX / stageLength) < 0.25;
-    const actualSpeed = isFirstFew ? currentSpeed * 0.55 * speedFactor : currentSpeed * speedFactor;
+    e.anim += 0.04;
 
     if (e.patternType === "WAVE_BIG") {
-      e.x -= actualSpeed;
+      e.x -= currentSpeed * 1.2;
       e.y = e.baseY + Math.sin(e.anim) * 95;
     } else if (e.patternType === "WAVE_SMALL") {
-      e.x -= actualSpeed * 1.1;
-      e.y = e.baseY + Math.sin(e.anim) * 28;
+      e.x -= currentSpeed * 1.4;
+      e.y = e.baseY + Math.sin(e.anim) * 32;
     } else if (e.patternType === "STRAIGHT") {
-      e.x -= actualSpeed * 1.4;
+      e.x -= currentSpeed * 1.6;
     } else if (e.patternType === "VERTICAL_DOWN") {
-      e.y += actualSpeed * 1.2;
+      e.y += currentSpeed * 1.4;
       e.x = e.baseX + Math.sin(e.anim) * 45;
     } else if (e.patternType === "VERTICAL_UP") {
-      e.y -= actualSpeed * 1.2;
+      e.y -= currentSpeed * 1.4;
       e.x = e.baseX + Math.sin(e.anim) * 45;
     }
 
@@ -1095,13 +1122,18 @@ function movePlayer() {
   }
 
   if (!touchActive) {
-    player.x += moveX * CONFIG.PLAYER_SPEED;
-    player.y += moveY * CONFIG.PLAYER_SPEED;
+    player.vx = moveX * CONFIG.PLAYER_SPEED;
+    player.vy = moveY * CONFIG.PLAYER_SPEED;
+    player.x += player.vx;
+    player.y += player.vy;
   }
 
   player.x = Math.max(player.radius, Math.min(CONFIG.CANVAS_WIDTH - player.radius, player.x));
   player.y = Math.max(player.radius, Math.min(CONFIG.CANVAS_HEIGHT - player.radius, player.y));
-  player.flameAnim = (player.flameAnim + 0.25) % (Math.PI * 2);
+  
+  if (Math.abs(player.vx) > 0.1 || Math.abs(player.vy) > 0.1) {
+    player.flameAnim = (player.flameAnim + 0.3) % (Math.PI * 2);
+  }
 }
 
 function updateScroll() {
@@ -1196,14 +1228,24 @@ function drawPlayer(x, y) {
   ctx.translate(x, y);
 
   if (gameState !== "DYING") {
-    const flameLen = 16 + Math.sin(player.flameAnim) * 8;
+    // 💡ロケット推進：移動している方向の「反対側」に炎（ジェット噴射）を描画
+    let moveAngle = Math.PI; // デフォルトは後方(左)
+    const speedSq = player.vx * player.vx + player.vy * player.vy;
+    if (speedSq > 0.01) {
+      moveAngle = Math.atan2(player.vy, player.vx) + Math.PI;
+    }
+
+    const flameLen = 18 + Math.sin(player.flameAnim) * 8;
+    ctx.save();
+    ctx.rotate(moveAngle);
     ctx.fillStyle = "#ff6b81";
     ctx.beginPath();
-    ctx.moveTo(-player.radius + 4, -12);
-    ctx.lineTo(-player.radius - flameLen, 0);
-    ctx.lineTo(-player.radius + 4, 12);
+    ctx.moveTo(player.radius - 4, -12);
+    ctx.lineTo(player.radius + flameLen, 0);
+    ctx.lineTo(player.radius - 4, 12);
     ctx.closePath();
     ctx.fill();
+    ctx.restore();
   }
 
   let playerColor = CONFIG.COLOR_PLAYER;
@@ -1423,17 +1465,12 @@ function drawHUD() {
   ctx.fillText(`SCORE: ${score.toString().padStart(6, "0")}`, 155, 32);
 
   const attachedCount = forces.filter(f => f.state === "ATTACHED").length;
-  ctx.fillText(`FORCES: ${attachedCount}/${forces.length}`, 390, 32);
-  
-  if (isInvincible) {
-    ctx.fillStyle = "#ff6b81";
-    ctx.fillText("[GOD]", 565, 32);
-  }
+  ctx.fillText(`FORCES: ${attachedCount}/${forces.length}`, 380, 32);
 
   if (boss.isActive) {
     const hpRatio = Math.max(0, boss.hp / boss.maxHp);
-    const bW = 160, bH = 16;
-    const bX = CONFIG.CANVAS_WIDTH - 155, bY = 18;
+    const bW = 140, bH = 16;
+    const bX = CONFIG.CANVAS_WIDTH - 145, bY = 18;
     ctx.strokeStyle = "#ff6b81";
     ctx.lineWidth = 2;
     ctx.strokeRect(bX, bY, bW, bH);
@@ -1466,7 +1503,6 @@ function drawOverlay() {
     ctx.font = "bold 16px monospace";
     ctx.fillText("✨ 鉄球オプションがピタリと重なる新感覚シューティング ✨", CONFIG.CANVAS_WIDTH / 2, 275);
 
-    // 💡画面内にも分かりやすい「ゲーム開始ボタン」UIを描画
     ctx.fillStyle = "#ff6b81";
     ctx.beginPath();
     ctx.roundRect(CONFIG.CANVAS_WIDTH / 2 - 160, 315, 320, 60, 30);
@@ -1477,12 +1513,12 @@ function drawOverlay() {
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 20px monospace";
-    ctx.fillText("▶ 游戏開始 / スタート", CONFIG.CANVAS_WIDTH / 2, 351);
+    ctx.fillText("▶ ゲーム開始 / スタート", CONFIG.CANVAS_WIDTH / 2, 351);
 
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "13px monospace";
-    ctx.fillText("・スマホ: 左半分ドラッグ(移動) / 右半分タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 420);
-    ctx.fillText("・「I」キーで無敵モード切替可能", CONFIG.CANVAS_WIDTH / 2, 450);
+    ctx.fillText("・スマホ: 左ドラッグ(移動) / 右タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 420);
+    ctx.fillText("・右上 GODボタン / Iキー で無敵切替可能", CONFIG.CANVAS_WIDTH / 2, 450);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
@@ -1584,4 +1620,3 @@ requestAnimationFrame(gameLoop);
 </script>
 </body>
 </html>
-
