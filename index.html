@@ -123,7 +123,6 @@
     <button class="game-btn" id="godBtn">GOD: OFF</button>
   </div>
 
-  <!-- 数値調整モード用パネル -->
   <div id="config-panel">
     <div style="font-weight:bold; margin-bottom:10px; color:#ff9ff3;">⚙ 数値調整モード</div>
     <div class="cfg-row">
@@ -403,6 +402,7 @@ let score = 0;
 let gameFrame = 0;
 let nextSpawnDelay = 60;
 let squadSpawnCounter = 0;
+let creditFrame = 0; // 💡クレジット画面用フレームカウンター（5秒間入力禁止判定用）
 
 let isInvincible = false;
 
@@ -490,7 +490,10 @@ function triggerGameAction() {
     return;
   }
   if (gameState === "CREDITS") {
-    gameState = "TITLE";
+    // 💡5秒間（300フレーム）経過していなければ入力を受け付けない
+    if (creditFrame >= 300) {
+      gameState = "TITLE";
+    }
     return;
   }
   if (gameState === "PAUSE") {
@@ -514,9 +517,13 @@ container.addEventListener("mousedown", (e) => {
 
 canvas.addEventListener("touchstart", (e) => {
   sounds.init();
-  if (gameState === "TITLE" || gameState === "GAMEOVER" || gameState === "CREDITS") {
+  if (gameState === "TITLE" || gameState === "GAMEOVER" || (gameState === "CREDITS" && creditFrame >= 300)) {
     e.preventDefault();
     triggerGameAction();
+    return;
+  }
+  if (gameState === "CREDITS" && creditFrame < 300) {
+    e.preventDefault(); // 5秒未満のタッチを無効化
     return;
   }
   if (gameState === "PAUSE") {
@@ -668,6 +675,13 @@ window.addEventListener("keydown", (e) => {
     if (handled) { e.preventDefault(); return; }
   }
 
+  if (gameState === "CREDITS") {
+    if (creditFrame < 300) {
+      e.preventDefault(); // 5秒未満の入力を一切ガード
+      return;
+    }
+  }
+
   if (gameState === "TITLE" || gameState === "GAMEOVER" || gameState === "CREDITS") {
     if (isUpKey(e) || isDownKey(e) || isLeftKey(e) || isRightKey(e) || isActionKey(e) || e.code === "Enter") {
       triggerGameAction();
@@ -767,7 +781,7 @@ function startGame() {
 
 function triggerAnnouncement(text) {
   waveAnnouncementText = text;
-  waveAnnouncementTimer = 120; // 2秒間
+  waveAnnouncementTimer = 120;
 }
 
 // ============================================================================
@@ -895,7 +909,7 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. 6ウェーブ制 ＆ アイテム・敵管理
+// 7. 6ウェーブ制 ＆ アイテム・敵管理（キャリアを2色に分割しオプションを半減）
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
@@ -925,7 +939,7 @@ function updateSquadSpawning() {
   }
 
   let effectiveDelay = spawnIntervalSetting;
-  if (currentWave === 1) effectiveDelay = 200; // Wave1は出現間隔を長めにしてラクに
+  if (currentWave === 1) effectiveDelay = 200;
   else if (currentWave === 2) effectiveDelay = 110;
   else if (currentWave >= 3) effectiveDelay = Math.max(35, spawnIntervalSetting - (currentWave * 8));
 
@@ -939,7 +953,6 @@ function updateSquadSpawning() {
     let startX = CONFIG.CANVAS_WIDTH + 24;
     let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
 
-    // 💡 Wave 1は常に直線（STRAIGHT）のみにする
     if (currentWave === 1) {
       patternType = "STRAIGHT";
     } else if (currentWave === 4) {
@@ -959,12 +972,20 @@ function updateSquadSpawning() {
       patternType = Math.random() < 0.4 ? "STRAIGHT" : "WAVE_BIG";
     }
 
-    const isCarrier = currentWave >= 2 && Math.random() < 0.5;
-    const enemyType = isCarrier ? "CARRIER" : "NORMAL";
+    // 💡キャリアの分類：オプション（フォース）を出すやつは色を専用にして出現率を半分にする
+    let enemyType = "NORMAL";
+    if (currentWave >= 2) {
+      const r = Math.random();
+      if (r < 0.22) {
+        enemyType = "FORCE_CARRIER"; // 水色の「オプションを出すやつ」（出現率を半分に調整）
+      } else if (r < 0.45) {
+        enemyType = "SPEED_CARRIER"; // 黄色の「オプションを出さないやつ」
+      }
+    }
 
     squads.push({
       id: squadId,
-      total: 10, // 💡編隊の数（機数）は減らさず、通常の10機で爽快感をキープ
+      total: 10,
       remaining: 10,
       lastSpawnFrame: gameFrame,
       spawnedCount: 0,
@@ -976,7 +997,7 @@ function updateSquadSpawning() {
   }
 
   for (let s of squads) {
-    const delay = 22; // 標準の綺麗な間隔を維持
+    const delay = 22;
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
       s.lastSpawnFrame = gameFrame;
       s.spawnedCount++;
@@ -991,9 +1012,10 @@ function updateSquadSpawning() {
         anim: s.spawnedCount * 0.5,
         patternType: s.patternType,
         enemyType: s.enemyType,
-        hp: s.enemyType === "CARRIER" ? 3.0 : 2.0,
-        scoreVal: s.enemyType === "CARRIER" ? 250 : 100,
-        radius: s.enemyType === "CARRIER" ? 21 : CONFIG.ENEMY_RADIUS
+        hp: eType => eType !== "NORMAL" ? 3.0 : 2.0,
+        hpVal: s.enemyType !== "NORMAL" ? 3.0 : 2.0,
+        scoreVal: s.enemyType !== "NORMAL" ? 250 : 100,
+        radius: s.enemyType !== "NORMAL" ? 21 : CONFIG.ENEMY_RADIUS
       });
     }
   }
@@ -1003,7 +1025,7 @@ function updateSquadSpawning() {
 
 function triggerWaveRest(nextWaveNum) {
   waveState = "REST";
-  restTimer = 90;
+  restTimer = 120;
   currentWave = nextWaveNum;
   triggerAnnouncement(`REST / WAVE ${nextWaveNum}`);
 }
@@ -1040,9 +1062,9 @@ function updateEnemies() {
     for (let f of forces) {
       const distToForce = Math.hypot(e.x - f.x, e.y - f.y);
       if (distToForce < f.radius + e.radius) {
-        e.hp -= 2.5;
+        e.hpVal -= 2.5;
         createExplosion(e.x, e.y, CONFIG.COLOR_IRON_LIGHT, 4);
-        if (e.hp <= 0) {
+        if (e.hpVal <= 0) {
           destroyEnemy(i, e);
           break;
         }
@@ -1085,7 +1107,7 @@ function updateEnemies() {
         score += 1000;
         sounds.playGet();
         createExplosion(item.x, item.y, "#ffe600", 25);
-        addFloatingText(player.x, player.y - 45, "SPEED UP!");
+        addFloatingText(player.x, player.y - 50, "SPEED UP !!");
       } else {
         const newId = forces.length + 1;
         const newForce = createForceObject(newId, "PLAYER", null, Math.PI);
@@ -1097,7 +1119,7 @@ function updateEnemies() {
         score += 1500;
         sounds.playGet();
         createExplosion(item.x, item.y, "#54a0ff", 30);
-        addFloatingText(player.x, player.y - 45, `GET FORCE #${newId}!`);
+        addFloatingText(player.x, player.y - 50, `FORCE GET !! (#${newId})`);
       }
       droppedItems.splice(i, 1);
     }
@@ -1122,7 +1144,7 @@ function updateEnemies() {
 
 function destroyEnemy(index, e) {
   sounds.playEnemyDestroy();
-  createExplosion(e.x, e.y, e.enemyType === "CARRIER" ? "#ff9ff3" : "#ff6b81", 16);
+  createExplosion(e.x, e.y, e.enemyType !== "NORMAL" ? "#ff9ff3" : "#ff6b81", 16);
   addFloatingText(e.x, e.y - 8, `+${e.scoreVal}`);
   score += e.scoreVal;
 
@@ -1134,21 +1156,38 @@ function destroyEnemy(index, e) {
         const targetEdgeX = 350 + Math.random() * 220;
         const targetEdgeY = 60 + Math.random() * (CONFIG.CANVAS_HEIGHT - 120);
 
-        const isSpeedItem = Math.random() < 0.3;
-        const nextNum = forces.length + 1;
-
-        droppedItems.push({
-          x: e.x,
-          y: e.y,
-          targetX: targetEdgeX,
-          targetY: targetEdgeY,
-          stage: "DASHING",
-          itemType: isSpeedItem ? "SPEED_UP" : "FORCE",
-          nextId: nextNum,
-          radius: CONFIG.FORCE_RADIUS
-        });
-        sounds.playGet();
-        addFloatingText(e.x, e.y - 24, isSpeedItem ? "SPEED UP DROP!" : `FORCE DROP #${nextNum}!`);
+        // 💡オプションを出す敵（FORCE_CARRIER）なら確実にフォースをドロップ
+        // 💡それ以外（SPEED_CARRIERや通常敵）は、3回に1回くらいのランダム（約33%）でスピードアップをドロップ
+        if (e.enemyType === "FORCE_CARRIER") {
+          const nextNum = forces.length + 1;
+          droppedItems.push({
+            x: e.x,
+            y: e.y,
+            targetX: targetEdgeX,
+            targetY: targetEdgeY,
+            stage: "DASHING",
+            itemType: "FORCE",
+            nextId: nextNum,
+            radius: CONFIG.FORCE_RADIUS
+          });
+          sounds.playGet();
+          addFloatingText(e.x, e.y - 24, `FORCE DROP #${nextNum}!`);
+        } else if (e.enemyType === "SPEED_CARRIER" || Math.random() < 0.25) {
+          // スピードキャリア、または通常敵からの約3回に1回ランダムドロップ
+          if (Math.random() < 0.35 || e.enemyType === "SPEED_CARRIER") {
+            droppedItems.push({
+              x: e.x,
+              y: e.y,
+              targetX: targetEdgeX,
+              targetY: targetEdgeY,
+              stage: "DASHING",
+              itemType: "SPEED_UP",
+              radius: CONFIG.FORCE_RADIUS
+            });
+            sounds.playGet();
+            addFloatingText(e.x, e.y - 24, "SPEED UP DROP!");
+          }
+        }
       }
     }
   }
@@ -1260,6 +1299,7 @@ function checkBossDefeat(bx, by) {
     score += 100000;
     sounds.stopBGM();
     gameState = "CREDITS";
+    creditFrame = 0; // 💡クレジット画面移行時にフレームタイマーをリセット
   }
 }
 
@@ -1335,7 +1375,7 @@ function createExplosion(x, y, color = "#ff6b81", count = 15) {
 }
 
 function addFloatingText(x, y, text) {
-  floatingTexts.push({ x, y, text, alpha: 1.0, vy: -0.7 });
+  floatingTexts.push({ x, y, text, alpha: 1.0, vy: -0.8 });
 }
 
 function update() {
@@ -1343,6 +1383,10 @@ function update() {
 
   if (waveAnnouncementTimer > 0) {
     waveAnnouncementTimer--;
+  }
+
+  if (gameState === "CREDITS") {
+    creditFrame++; // 💡スタッフロール中の経過フレームをカウント
   }
 
   stars.forEach(s => {
@@ -1357,7 +1401,7 @@ function update() {
   }
   for (let i = floatingTexts.length - 1; i >= 0; i--) {
     const ft = floatingTexts[i];
-    ft.y += ft.vy; ft.alpha -= 0.02;
+    ft.y += ft.vy; ft.alpha -= 0.015;
     if (ft.alpha <= 0) floatingTexts.splice(i, 1);
   }
 
@@ -1480,7 +1524,18 @@ function drawEnemies() {
     ctx.save();
     ctx.translate(e.x, e.y);
 
-    if (e.enemyType === "CARRIER") {
+    if (e.enemyType === "FORCE_CARRIER") {
+      // 💡オプションを出すキャリア（水色）
+      ctx.fillStyle = "#00d2d3";
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ff6b81";
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (e.enemyType === "SPEED_CARRIER") {
+      // 💡スピードアップを出すキャリア（黄色）
       ctx.fillStyle = "#ffe600";
       ctx.beginPath();
       ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
@@ -1508,29 +1563,57 @@ function drawEnemies() {
     ctx.translate(item.x, item.y);
 
     const flash = (Math.sin(gameFrame * 0.3) + 1) / 2;
-    const glowRadius = item.radius + 14 + flash * 10;
-
     const isSpeed = item.itemType === "SPEED_UP";
-    const mainColor = isSpeed ? "#ffe600" : "#54a0ff";
 
-    const auraGrad = ctx.createRadialGradient(0, 0, item.radius, 0, 0, glowRadius);
-    auraGrad.addColorStop(0, isSpeed ? `rgba(255, 230, 0, 0.8)` : `rgba(84, 160, 255, 0.8)`);
-    auraGrad.addColorStop(1, "rgba(0,0,0,0)");
-    ctx.fillStyle = auraGrad;
-    ctx.beginPath();
-    ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
-    ctx.fill();
+    if (isSpeed) {
+      // 💡スピードアップアイテム：美しい黄色い「光のたま」
+      const glowRadius = item.radius + 12 + flash * 8;
+      const auraGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, glowRadius);
+      auraGrad.addColorStop(0, "#ffffff");
+      auraGrad.addColorStop(0.4, "#ffe600");
+      auraGrad.addColorStop(1, "rgba(255, 230, 0, 0)");
+      ctx.fillStyle = auraGrad;
+      ctx.beginPath();
+      ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
+      ctx.fill();
 
-    ctx.fillStyle = mainColor;
-    ctx.beginPath();
-    ctx.arc(0, 0, item.radius, 0, Math.PI * 2);
-    ctx.fill();
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 9px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("SPEED", 0, 1);
+    } else {
+      // 💡オプション（フォース）アイテム：前の鉄球のピカピカのまま（立体グラデーション＋番号）
+      const glowRadius = item.radius + 12 + flash * 8;
+      const auraGrad = ctx.createRadialGradient(0, 0, item.radius, 0, 0, glowRadius);
+      auraGrad.addColorStop(0, "rgba(84, 160, 255, 0.8)");
+      auraGrad.addColorStop(1, "rgba(84, 160, 255, 0)");
+      ctx.fillStyle = auraGrad;
+      ctx.beginPath();
+      ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
+      ctx.fill();
 
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 11px monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(isSpeed ? "SPD" : `+${item.nextId}`, 0, 1);
+      const grad = ctx.createRadialGradient(-6, -6, 2, 0, 0, item.radius);
+      grad.addColorStop(0, "#ffffff");
+      grad.addColorStop(0.6, CONFIG.COLOR_IRON_BASE);
+      grad.addColorStop(1, CONFIG.COLOR_IRON_DARK);
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(0, 0, item.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, item.radius + 2, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.fillStyle = "#54a0ff";
+      ctx.font = "bold 13px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(`+${item.nextId}`, 0, 1);
+    }
 
     ctx.restore();
   });
@@ -1689,7 +1772,7 @@ function drawOverlay() {
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "12px monospace";
     ctx.fillText("・全6ウェーブ（上空・地底・全方位襲撃 ＆ ボス戦）", CONFIG.CANVAS_WIDTH / 2, 420);
-    ctx.fillText("・キャリア撃破でフォース ＆ スピードUP獲得", CONFIG.CANVAS_WIDTH / 2, 445);
+    ctx.fillText("・水色: FORCE追加 / 黄色: SPEED UP", CONFIG.CANVAS_WIDTH / 2, 445);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
@@ -1739,6 +1822,7 @@ function drawOverlay() {
       ctx.fillText("[ TAP / CLICK TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 440);
     }
   } else if (gameState === "CREDITS") {
+    // 💡スタッフロール画面（5秒間＝300フレームは入力を完全ガード）
     ctx.fillStyle = "rgba(10, 20, 35, 0.96)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
@@ -1758,11 +1842,14 @@ function drawOverlay() {
     ctx.font = "16px monospace";
     ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 430);
 
-    const blink = Math.floor(Date.now() / 400) % 2 === 0;
-    if (blink) {
-      ctx.fillStyle = "#ff9ff3";
-      ctx.font = "bold 16px monospace";
-      ctx.fillText("[ TAP / CLICK OR KEY TO TITLE ]", CONFIG.CANVAS_WIDTH / 2, 515);
+    // 💡5秒（300フレーム）経過後のみ「Press Any Button」を点滅表示して受付開始
+    if (creditFrame >= 300) {
+      const blink = Math.floor(Date.now() / 400) % 2 === 0;
+      if (blink) {
+        ctx.fillStyle = "#ffe600";
+        ctx.font = "bold 20px monospace";
+        ctx.fillText("- PRESS ANY BUTTON -", CONFIG.CANVAS_WIDTH / 2, 515);
+      }
     }
   }
 
