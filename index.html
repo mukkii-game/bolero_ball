@@ -391,15 +391,16 @@ const stars = Array.from({ length: 70 }, () => ({
 
 let currentStage = 1;
 let currentWave = 1; // 1, 2, 3
-let waveState = "PLAYING"; // "PLAYING" or "REST" (小休止中)
-let waveTimer = 0;
+let waveState = "PLAYING"; // "PLAYING" or "REST"
 let restTimer = 0;
+let waveAnnouncementTimer = 0; // 画面中央への2秒間表示用 (120フレーム)
+let waveAnnouncementText = "";
 
 let gameState = "TITLE";
 let pauseMenuSelection = 0;
 let scrollX = 0;
 let scrollY = 0;
-let stageLength = 2400; // 各ステージの長さ
+let stageLength = 2400;
 let score = 0;
 let gameFrame = 0;
 let transitionTimer = 0;
@@ -724,7 +725,6 @@ function startGame(stageNum = 1) {
   currentStage = stageNum;
   currentWave = 1;
   waveState = "PLAYING";
-  waveTimer = 0;
   restTimer = 0;
   score = (stageNum === 1) ? 0 : score;
   gameFrame = 0;
@@ -737,6 +737,9 @@ function startGame(stageNum = 1) {
   enemies = [];
   droppedForceItems = [];
   squads = [];
+
+  // 開始時にWave 1の文字を大きく中央に2秒間表示
+  triggerAnnouncement("WAVE 1");
 
   if (stageNum === 1) {
     player.x = 120;
@@ -765,6 +768,11 @@ function startGame(stageNum = 1) {
   updateAllForcePositions();
   sounds.playBGM();
   gameState = "PLAYING";
+}
+
+function triggerAnnouncement(text) {
+  waveAnnouncementText = text;
+  waveAnnouncementTimer = 120; // 120フレーム = ちょうど2秒間
 }
 
 // ============================================================================
@@ -897,41 +905,45 @@ function updateForces() {
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
 
-  // ウェーブ進行管理 (scrollXに基づいてWave 1 -> Wave 2 -> Wave 3へ遷移)
   const progressRatio = scrollX / stageLength;
   
-  if (progressRatio < 0.30) {
+  // Waveの進行判定と小休止タイム（REST）の挿入
+  if (progressRatio < 0.33) {
     if (currentWave !== 1 && waveState === "PLAYING") {
-      triggerWaveRest(2); // Wave 1終わり
+      currentWave = 1;
     }
-  } else if (progressRatio >= 0.30 && progressRatio < 0.65) {
-    if (currentWave !== 2 && waveState === "PLAYING") {
-      triggerWaveRest(3); // Wave 2終わり
+  } else if (progressRatio >= 0.33 && progressRatio < 0.66) {
+    if (currentWave !== 2) {
+      if (waveState === "PLAYING") {
+        triggerWaveRest(2);
+      }
     }
-  } else if (progressRatio >= 0.65 && progressRatio < 0.95) {
-    if (currentWave !== 3 && waveState === "PLAYING") {
-      // Wave 3開始
-      currentWave = 3;
+  } else if (progressRatio >= 0.66 && progressRatio < 0.95) {
+    if (currentWave !== 3) {
+      if (waveState === "PLAYING") {
+        triggerWaveRest(3);
+      }
     }
   }
 
-  // 小休止タイム中(REST)は敵を出さない
+  // 小休止タイム中は敵が出現しない
   if (waveState === "REST") {
     restTimer--;
     if (restTimer <= 0) {
       waveState = "PLAYING";
+      triggerAnnouncement(`WAVE ${currentWave}`);
     }
     return;
   }
 
-  // Waveごとの出現頻度設定
+  // Waveごとの出現間隔（Wave1はラク、Wave2は中間、Wave3はいまのガンガン）
   let effectiveSpawnDelay = spawnIntervalSetting;
   if (currentWave === 1) {
-    effectiveSpawnDelay = 180; // ラク：1体ずつゆっくり
+    effectiveSpawnDelay = 180; // ラク（間隔長め）
   } else if (currentWave === 2) {
     effectiveSpawnDelay = 110; // そのあいだくらい
   } else {
-    effectiveSpawnDelay = spawnIntervalSetting; // いまの（ガンガン）
+    effectiveSpawnDelay = spawnIntervalSetting; // いまのガンガン
   }
 
   nextSpawnDelay--;
@@ -942,9 +954,8 @@ function updateSquadSpawning() {
     const squadId = Date.now() + Math.random();
     let patternType = "WAVE_BIG";
     
-    // Wave1は完全に一つずつ直線などラクに
     if (currentWave === 1) {
-      patternType = "STRAIGHT";
+      patternType = "STRAIGHT"; // Wave1はシンプルに直線多め
     } else if (squadSpawnCounter <= 2) {
       patternType = "STRAIGHT";
     } else {
@@ -959,16 +970,16 @@ function updateSquadSpawning() {
     let startX = CONFIG.CANVAS_WIDTH + 24;
     let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
 
-    // 2面の後半などは縦方向スクロールや全方向ミックス
     if (currentStage === 2 && Math.random() < 0.5) {
       startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
       startY = Math.random() < 0.5 ? -24 : CONFIG.CANVAS_HEIGHT + 24;
     }
 
-    // Wave1はキャリアや複数出現を抑える
     const isCarrier = (currentWave >= 2) && (Math.random() < 0.45);
     const enemyType = isCarrier ? "CARRIER" : "NORMAL";
-    const squadTotal = (currentWave === 1) ? 3 : (currentWave === 2 ? 6 : 10);
+    
+    // 編隊数（敵の数）は減らさず、倒した時の手応えをしっかり確保 (常に10機)
+    const squadTotal = 10;
 
     squads.push({
       id: squadId,
@@ -984,7 +995,8 @@ function updateSquadSpawning() {
   }
 
   for (let s of squads) {
-    const delay = currentWave === 1 ? 45 : 22;
+    // Wave1は編隊内の出現間隔も少しゆったりにしてラクに
+    const delay = currentWave === 1 ? 40 : 22;
 
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
       s.lastSpawnFrame = gameFrame;
@@ -1013,9 +1025,9 @@ function updateSquadSpawning() {
 
 function triggerWaveRest(nextWaveNum) {
   waveState = "REST";
-  restTimer = 150; // 小休止タイムの長さ（約2.5秒）
+  restTimer = 120; // 約2秒の小休止タイム
   currentWave = nextWaveNum;
-  addFloatingText(CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2 - 40, `=== WAVE ${nextWaveNum} START SOON ===`);
+  triggerAnnouncement(`REST / WAVE ${nextWaveNum}`);
 }
 
 function updateEnemies() {
@@ -1226,9 +1238,8 @@ function checkBossDefeat(bx, by) {
       gameState = "STAGE_TRANSITION";
       transitionTimer = 120;
     } else {
-      // 💡2面クリアしたらスタッフロール画面へ
       sounds.stopBGM();
-      gameState = "CREDITS";
+      gameState = "CREDITS"; // スタッフロールへ
     }
   }
 }
@@ -1311,6 +1322,10 @@ function addFloatingText(x, y, text) {
 
 function update() {
   gameFrame++;
+
+  if (waveAnnouncementTimer > 0) {
+    waveAnnouncementTimer--;
+  }
 
   stars.forEach(s => {
     if (currentStage === 2) {
@@ -1603,7 +1618,6 @@ function drawHUD() {
   ctx.fillText(`STAGE ${currentStage}`, 18, 32);
   ctx.fillText(`SCORE: ${score.toString().padStart(6, "0")}`, 145, 32);
 
-  // WAVE表示
   const waveStr = waveState === "REST" ? "REST" : `WAVE ${currentWave}`;
   ctx.fillStyle = waveState === "REST" ? "#ffe600" : "#ff9ff3";
   ctx.fillText(waveStr, 330, 32);
@@ -1629,6 +1643,23 @@ function drawHUD() {
 function drawOverlay() {
   ctx.save();
   ctx.textAlign = "center";
+
+  // 💡ウェーブ切り替え時やREST時に画面中央に大きく2秒間表示する演出
+  if (waveAnnouncementTimer > 0 && gameState === "PLAYING") {
+    ctx.save();
+    ctx.fillStyle = "rgba(15, 16, 32, 0.75)";
+    ctx.fillRect(0, 240, CONFIG.CANVAS_WIDTH, 120);
+    ctx.strokeStyle = "#ff6b81";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(0, 240, CONFIG.CANVAS_WIDTH, 120);
+
+    ctx.fillStyle = "#ffe600";
+    ctx.shadowColor = "#ff9ff3";
+    ctx.shadowBlur = 20;
+    ctx.font = "bold 46px monospace";
+    ctx.fillText(waveAnnouncementText, CONFIG.CANVAS_WIDTH / 2, 315);
+    ctx.restore();
+  }
 
   if (gameState === "TITLE") {
     ctx.fillStyle = "rgba(15, 16, 32, 0.95)";
@@ -1661,7 +1692,7 @@ function drawOverlay() {
     ctx.font = "12px monospace";
     ctx.fillText("・PC: WASD/矢印(移動) | N/M/Space(発射) | ESC(ポーズ)", CONFIG.CANVAS_WIDTH / 2, 420);
     ctx.fillText("・スマホ: 左ドラッグ(移動) | 右タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 445);
-    ctx.fillText("・全2面 / 各面3ウェーブ（小休止タイム付き）", CONFIG.CANVAS_WIDTH / 2, 470);
+    ctx.fillText("・全2面 / 3段階ウェーブ（小休止タイム付き）", CONFIG.CANVAS_WIDTH / 2, 470);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
@@ -1732,21 +1763,21 @@ function drawOverlay() {
 
     ctx.fillStyle = "#ffe600";
     ctx.font = "bold 24px monospace";
-    ctx.fillText("Thank you for playing!", CONFIG.CANVAS_WIDTH / 2, 240);
+    ctx.fillText("Thank you for playing!", CONFIG.CANVAS_WIDTH / 2, 250);
 
     ctx.fillStyle = "#54a0ff";
-    ctx.font = "bold 20px monospace";
-    ctx.fillText("Created by mukkii", CONFIG.CANVAS_WIDTH / 2, 340);
+    ctx.font = "bold 22px monospace";
+    ctx.fillText("Created by mukkii", CONFIG.CANVAS_WIDTH / 2, 350);
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "16px monospace";
-    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 420);
+    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 430);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
       ctx.fillStyle = "#ff9ff3";
       ctx.font = "bold 16px monospace";
-      ctx.fillText("[ TAP / CLICK OR KEY TO TITLE ]", CONFIG.CANVAS_WIDTH / 2, 510);
+      ctx.fillText("[ TAP / CLICK OR KEY TO TITLE ]", CONFIG.CANVAS_WIDTH / 2, 515);
     }
   }
 
