@@ -404,6 +404,9 @@ let nextSpawnDelay = 60;
 let squadSpawnCounter = 0;
 let creditFrame = 0;
 
+let wave1SpawnedCount = 0; // 💡Wave1で生成した編隊の数（全3編隊）
+let carrierCounter = 0;     // 💡スピードアップの4回に1回カウント用
+
 let isInvincible = false;
 
 function toggleGodMode() {
@@ -744,6 +747,8 @@ function startGame() {
   scrollX = 0;
   nextSpawnDelay = 60;
   squadSpawnCounter = 0;
+  wave1SpawnedCount = 0;
+  carrierCounter = 0;
   particles = [];
   floatingTexts = [];
   enemies = [];
@@ -935,10 +940,38 @@ function updateSquadSpawning() {
     return;
   }
 
+  // 💡Wave 1専用の厳密なスポーン処理（最初の2編隊はみどり＝FORCE_CARRIER、3つ目はノーマル、合計3編隊）
+  if (currentWave === 1) {
+    if (wave1SpawnedCount < 3) {
+      nextSpawnDelay--;
+      if (nextSpawnDelay <= 0) {
+        nextSpawnDelay = 180; // ゆったり
+        let enemyType = "NORMAL";
+        if (wave1SpawnedCount === 0 || wave1SpawnedCount === 1) {
+          enemyType = "FORCE_CARRIER"; // 最初の2編隊は必ず緑（鉄球）
+        }
+        squads.push({
+          id: Date.now() + Math.random(),
+          total: 10,
+          remaining: 10,
+          lastSpawnFrame: gameFrame,
+          spawnedCount: 0,
+          startX: CONFIG.CANVAS_WIDTH + 24,
+          startY: 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240),
+          patternType: "STRAIGHT", // Wave 1は常に直線
+          enemyType: enemyType
+        });
+        wave1SpawnedCount++;
+      }
+    }
+    return;
+  }
+
+  // 💡Wave 2〜6のスポーン処理
+  // Wave 2, 3は敵の数を半分にするため、出現間隔を倍に＆編隊数も5機にする
   let effectiveDelay = spawnIntervalSetting;
-  if (currentWave === 1) effectiveDelay = 240;
-  else if (currentWave === 2) effectiveDelay = 180;
-  else if (currentWave === 3) effectiveDelay = 140;
+  if (currentWave === 2) effectiveDelay = 220;
+  else if (currentWave === 3) effectiveDelay = 180;
   else if (currentWave >= 4) effectiveDelay = Math.max(35, spawnIntervalSetting - (currentWave * 8));
 
   nextSpawnDelay--;
@@ -951,9 +984,9 @@ function updateSquadSpawning() {
     let startX = CONFIG.CANVAS_WIDTH + 24;
     let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
 
-    if (currentWave === 1) {
-      patternType = "STRAIGHT";
-    } else if (currentWave === 4) {
+    // 💡Wave 3〜6は直線（STRAIGHT）をしっかり混ぜる（40%の確率で直線）
+    const randPattern = Math.random();
+    if (currentWave === 4) {
       startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
       startY = -24;
       patternType = "VERTICAL_DOWN";
@@ -967,23 +1000,31 @@ function updateSquadSpawning() {
       else if (randDir < 0.66) { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = -24; patternType = "VERTICAL_DOWN"; }
       else { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = CONFIG.CANVAS_HEIGHT + 24; patternType = "VERTICAL_UP"; }
     } else {
-      patternType = Math.random() < 0.4 ? "STRAIGHT" : "WAVE_BIG";
+      // Wave 2, 3, その他: 直線を40%混ぜる
+      patternType = randPattern < 0.4 ? "STRAIGHT" : (Math.random() < 0.5 ? "WAVE_BIG" : "WAVE_SMALL");
     }
 
+    // 💡スピードアップは「4回に1回程度」のカウント制 (carrierCounter % 4 === 0)
     let enemyType = "NORMAL";
     if (currentWave >= 2) {
       const r = Math.random();
-      if (r < 0.12) {
-        enemyType = "FORCE_CARRIER";
-      } else if (r < 0.30) {
-        enemyType = "SPEED_CARRIER";
+      if (r < 0.15) {
+        enemyType = "FORCE_CARRIER"; // 緑（鉄球）
+      } else {
+        carrierCounter++;
+        if (carrierCounter % 4 === 0) {
+          enemyType = "SPEED_CARRIER"; // 黄色（4回に1回確実にスピードアップキャリア）
+        }
       }
     }
 
+    // 💡Wave 2, 3は敵の数を今の半分（5機）にする
+    const squadTotal = (currentWave === 2 || currentWave === 3) ? 5 : 10;
+
     squads.push({
       id: squadId,
-      total: (currentWave === 2 || currentWave === 3) ? 6 : 10,
-      remaining: (currentWave === 2 || currentWave === 3) ? 6 : 10,
+      total: squadTotal,
+      remaining: squadTotal,
       lastSpawnFrame: gameFrame,
       spawnedCount: 0,
       startX: startX,
@@ -1006,8 +1047,7 @@ function updateSquadSpawning() {
         y: s.startY,
         baseX: s.startX,
         baseY: s.startY,
-        // 💡重要：X座標ベースでサインカーブを計算するため、初期の進んだ距離（メンバーのインデックス×間隔）をオフセットとして持たせる
-        spawnIndex: s.spawnedCount,
+        spawnIndex: s.spawnedCount, // 💡同じルートをトレースするためのインデックス
         patternType: s.patternType,
         enemyType: s.enemyType,
         hpVal: s.enemyType !== "NORMAL" ? 3.0 : 2.0,
@@ -1034,7 +1074,7 @@ function updateEnemies() {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
 
-    // 💡曲線の軌道を「現在進んだX座標（距離）」を基準に計算することで、後から来る敵も先頭と100%同じルートを通る（待ち伏せ可能に！）
+    // 💡X座標ベースでサインカーブを計算し、後から来る敵も先頭と同じルートを完全再現（待ち伏せ可能）
     const distanceTraveled = (CONFIG.CANVAS_WIDTH + 50) - e.x + (e.spawnIndex * 28);
 
     if (e.patternType === "WAVE_BIG") {
@@ -1169,7 +1209,7 @@ function destroyEnemy(index, e) {
           });
           sounds.playGet();
           addFloatingText(e.x, e.y - 24, `FORCE DROP #${nextNum}!`);
-        } else if (e.enemyType === "SPEED_CARRIER" || Math.random() < 0.33) {
+        } else if (e.enemyType === "SPEED_CARRIER") {
           droppedItems.push({
             x: e.x,
             y: e.y,
