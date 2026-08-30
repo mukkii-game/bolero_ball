@@ -172,7 +172,7 @@ const CONFIG = {
   FORCE_DAMAGE_BODY: 0.8,
   
   ENEMY_RADIUS: 18,
-  FLYER_SPEED_BASE: 0.92, // 2割ダウン維持
+  FLYER_SPEED_BASE: 0.92,
   
   BOSS_CORE_CYCLE: 160,
   BOSS_CORE_OPEN_TIME: 90,
@@ -926,7 +926,7 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. 6ウェーブ制 ＆ アイテム・敵管理
+// 7. 6ウェーブ制 ＆ アイテム・敵管理（Wave 3〜6出現数・頻度半減調整）
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
@@ -980,11 +980,13 @@ function updateSquadSpawning() {
       }
     }
   } else {
-    // Wave 2〜6のスポーン
+    // 💡Wave 3〜6の出現頻度を半分に（出現間隔を拡大）
     let effectiveDelay = spawnIntervalSetting;
     if (currentWave === 2) effectiveDelay = 240;
-    else if (currentWave === 3) effectiveDelay = 200;
-    else if (currentWave >= 4) effectiveDelay = Math.max(35, spawnIntervalSetting - (currentWave * 8));
+    else if (currentWave === 3) effectiveDelay = 360; // 頻度半減
+    else if (currentWave === 4) effectiveDelay = 300; // 頻度半減
+    else if (currentWave === 5) effectiveDelay = 260; // 頻度半減
+    else if (currentWave >= 6) effectiveDelay = 220; // 頻度半減
 
     nextSpawnDelay--;
     if (nextSpawnDelay <= 0) {
@@ -1045,7 +1047,8 @@ function updateSquadSpawning() {
         }
       }
 
-      const squadTotal = (currentWave === 2 || currentWave === 3) ? 5 : 10;
+      // 💡Wave 3〜6の敵編隊1つあたりの機数も半分（5機）に設定
+      const squadTotal = 5;
 
       squads.push({
         id: squadId,
@@ -1100,7 +1103,6 @@ function updateEnemies() {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
 
-    // 空間固定レール方式（同じ位置を通る）
     if (e.patternType === "WAVE_BIG") {
       e.x -= currentSpeed * 1.2;
       e.y = e.baseY + Math.sin((CONFIG.CANVAS_WIDTH - e.x) * 0.035) * 95;
@@ -1254,7 +1256,7 @@ function destroyEnemy(index, e) {
 }
 
 // ============================================================================
-// 8. 巨大ボス戦
+// 8. 巨大ボス戦（ボスの巡回速度・ダッシュ速度を半分に調整）
 // ============================================================================
 function updateBoss() {
   if (!boss.isActive && scrollX >= stageLength) {
@@ -1266,14 +1268,15 @@ function updateBoss() {
   if (!boss.isActive) return;
 
   boss.timer++;
-  boss.legAnim += 0.08;
+  boss.legAnim += 0.04;
 
-  boss.moveAngle += 0.025;
+  // 💡ボスの巡回速度を半分に（0.025 -> 0.0125）
+  boss.moveAngle += 0.0125;
   if (!boss.isDashing) {
     boss.x = CONFIG.CANVAS_WIDTH - 150 + Math.sin(boss.moveAngle) * 40;
     boss.y = 320 + Math.cos(boss.moveAngle * 1.5) * 160;
 
-    if (boss.timer % 220 === 0) {
+    if (boss.timer % 240 === 0) {
       boss.isDashing = true;
       boss.dashTargetX = 150 + Math.random() * 350;
       boss.dashTargetY = 100 + Math.random() * 440;
@@ -1282,22 +1285,23 @@ function updateBoss() {
     const dx = boss.dashTargetX - boss.x;
     const dy = boss.dashTargetY - boss.y;
     const dist = Math.hypot(dx, dy);
-    if (dist > 8) {
-      boss.x += (dx / dist) * 7.0;
-      boss.y += (dy / dist) * 7.0;
+    // 💡ボスのダッシュ速度を半分に（7.0 -> 3.5）
+    if (dist > 6) {
+      boss.x += (dx / dist) * 3.5;
+      boss.y += (dy / dist) * 3.5;
     } else {
       boss.isDashing = false;
     }
   }
 
-  if (boss.timer % 70 === 0) {
+  if (boss.timer % 80 === 0) {
     const angleToPlayer = Math.atan2(player.y - boss.y, player.x - boss.x);
     for (let offset of [-0.3, 0, 0.3]) {
       enemyBullets.push({
         x: boss.x - 45,
         y: boss.y,
-        vx: Math.cos(angleToPlayer + offset) * 4.2,
-        vy: Math.sin(angleToPlayer + offset) * 4.2,
+        vx: Math.cos(angleToPlayer + offset) * 3.8,
+        vy: Math.sin(angleToPlayer + offset) * 3.8,
         radius: 6
       });
     }
@@ -1844,16 +1848,107 @@ function drawOverlay() {
 
     ctx.fillStyle = pauseMenuSelection === 0 ? "#ffe600" : "#ffffff";
     ctx.font = "bold 22px monospace";
-    ctx.fillText(pauseMenuSelection === 0 ? "▶ ゲームに戻る" : "　 ゲームに戻る", CONFIG.CANVAS_WIDTH / 2, 310);
+    ctx.fillText(pauseMenuSelection === 0 ? "▶ ゲームに戻る" : "  ゲームに戻る", CONFIG.CANVAS_WIDTH / 2, 310);
 
     ctx.fillStyle = pauseMenuSelection === 1 ? "#ffe600" : "#ffffff";
     ctx.font = "bold 22px monospace";
-    ctx.fillText(pauseMenuSelection === 1 ? "▶ タイトル画面に戻る" : "　 タイトル画面に戻る", CONFIG.CANVAS_WIDTH / 2, 380);
+    ctx.fillText(pauseMenuSelection === 1 ? "▶ タイトル画面に戻る" : "  タイトル画面に戻る", CONFIG.CANVAS_WIDTH / 2, 380);
 
     ctx.fillStyle = "#ff9ff3";
     ctx.font = "14px monospace";
     ctx.fillText("[ ESCキー または タップで決定 ]", CONFIG.CANVAS_WIDTH / 2, 480);
   } else if (gameState === "GAMEOVER") {
     ctx.fillStyle = "rgba(35, 10, 15, 0.9)";
-    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH
-                 
+    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+    ctx.fillStyle = "#ff6b81";
+    ctx.font = "bold 38px monospace";
+    ctx.fillText("GAME OVER", CONFIG.CANVAS_WIDTH / 2, 240);
+
+    ctx.fillStyle = "#54a0ff";
+    ctx.font = "bold 20px monospace";
+    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 295);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "15px monospace";
+    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 345);
+
+    const blink = Math.floor(Date.now() / 350) % 2 === 0;
+    if (blink) {
+      ctx.fillStyle = "#ffe66d";
+      ctx.font = "bold 16px monospace";
+      ctx.fillText("[ TAP / CLICK TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 440);
+    }
+  } else if (gameState === "CREDITS") {
+    ctx.fillStyle = "rgba(10, 20, 35, 0.96)";
+    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+    ctx.fillStyle = "#2ed573";
+    ctx.font = "bold 44px monospace";
+    ctx.fillText("Congratirations!!", CONFIG.CANVAS_WIDTH / 2, 160);
+
+    ctx.fillStyle = "#ffe600";
+    ctx.font = "bold 24px monospace";
+    ctx.fillText("Thank you for playing!", CONFIG.CANVAS_WIDTH / 2, 250);
+
+    ctx.fillStyle = "#54a0ff";
+    ctx.font = "bold 22px monospace";
+    ctx.fillText("Created by mukkii", CONFIG.CANVAS_WIDTH / 2, 350);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "16px monospace";
+    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 430);
+
+    if (creditFrame >= 300) {
+      const blink = Math.floor(Date.now() / 400) % 2 === 0;
+      if (blink) {
+        ctx.fillStyle = "#ffe600";
+        ctx.font = "bold 20px monospace";
+        ctx.fillText("- PRESS ANY BUTTON -", CONFIG.CANVAS_WIDTH / 2, 515);
+      }
+    }
+  }
+
+  ctx.restore();
+}
+
+function render() {
+  ctx.fillStyle = CONFIG.COLOR_BG;
+  ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+  stars.forEach(s => {
+    ctx.fillStyle = `rgba(200, 225, 255, ${s.alpha})`;
+    ctx.fillRect(s.x, s.y, s.size, s.size);
+  });
+
+  particles.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = Math.max(0, p.alpha);
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  });
+  ctx.globalAlpha = 1.0;
+
+  floatingTexts.forEach(ft => {
+    ctx.save();
+    ctx.fillStyle = `rgba(255, 230, 109, ${ft.alpha})`;
+    ctx.font = "bold 13px monospace";
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.restore();
+  });
+
+  drawEnemies();
+  drawPlayer(player.x, player.y);
+  forces.forEach(f => drawForce(f));
+  drawHUD();
+  drawOverlay();
+}
+
+function gameLoop() {
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
