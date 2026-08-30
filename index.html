@@ -57,7 +57,7 @@
       right: 12px;
       z-index: 10;
       display: flex;
-      gap: 8px;
+      gap: 6px;
     }
     .game-btn {
       background: rgba(84, 160, 255, 0.2);
@@ -73,6 +73,33 @@
     .game-btn:active {
       background: #54a0ff;
       color: #fff;
+    }
+    #config-panel {
+      display: none;
+      position: absolute;
+      top: 60px;
+      left: 20px;
+      background: rgba(15, 16, 32, 0.96);
+      border: 2px solid #54a0ff;
+      padding: 14px;
+      border-radius: 10px;
+      z-index: 25;
+      color: #fff;
+      font-size: 13px;
+      box-shadow: 0 0 20px rgba(84, 160, 255, 0.4);
+    }
+    .cfg-row {
+      margin-bottom: 8px;
+    }
+    .cfg-btn {
+      background: #54a0ff;
+      color: #000;
+      border: none;
+      padding: 2px 8px;
+      font-weight: bold;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-left: 4px;
     }
     #instructions {
       margin-top: 10px;
@@ -92,17 +119,36 @@
 
 <div id="game-container">
   <div id="ui-overlay-buttons">
+    <button class="game-btn" id="cfgBtn">⚙ 調整</button>
     <button class="game-btn" id="godBtn">GOD: OFF</button>
   </div>
+
+  <!-- 数値調整モード用パネル -->
+  <div id="config-panel">
+    <div style="font-weight:bold; margin-bottom:10px; color:#ff9ff3;">⚙ 数値調整モード</div>
+    <div class="cfg-row">
+      湧き間隔 (Spawn): <span id="val-spawn">75</span>
+      <button class="cfg-btn" onclick="adjustParam('spawn', -15)">-</button>
+      <button class="cfg-btn" onclick="adjustParam('spawn', 15)">+</button>
+    </div>
+    <div class="cfg-row">
+      敵スピード (Speed): <span id="val-speed">1.15</span>
+      <button class="cfg-btn" onclick="adjustParam('speed', -0.1)">-</button>
+      <button class="cfg-btn" onclick="adjustParam('speed', 0.1)">+</button>
+    </div>
+    <div style="text-align: right; margin-top: 10px;">
+      <button class="game-btn" onclick="toggleConfigPanel()">閉じる</button>
+    </div>
+  </div>
+
   <canvas id="gameCanvas" width="640" height="640"></canvas>
   <div class="scanlines"></div>
 </div>
 
 <div id="instructions">
-  [ 操作 ]: <span>左半分ドラッグ</span> (移動) | <span>右半分タップ</span> (発射・帰還) | <span>ESC</span> (ポーズメニュー)
+  [ 操作 ]: <span>左半分ドラッグ</span> (移動) | <span>右半分タップ</span> (発射・帰還) | <span>ESC</span> (ポーズ)
 </div>
 
-<!-- 💡アップロードしたRavel-Borelo.mp3を直接読み込み -->
 <audio id="bgmAudio" src="Ravel-Borelo.mp3" loop preload="auto"></audio>
 
 <script>
@@ -143,15 +189,37 @@ const CONFIG = {
   COLOR_HUD_TEXT: "#54a0ff"
 };
 
+let spawnIntervalSetting = 75; // 💡ガンガン湧く初期値
+
+function toggleConfigPanel() {
+  const panel = document.getElementById("config-panel");
+  panel.style.display = panel.style.display === "none" ? "block" : "none";
+}
+
+function adjustParam(type, amount) {
+  if (type === 'spawn') {
+    spawnIntervalSetting = Math.max(20, Math.min(300, spawnIntervalSetting + amount));
+    document.getElementById("val-spawn").textContent = spawnIntervalSetting;
+  } else if (type === 'speed') {
+    CONFIG.FLYER_SPEED_BASE = Math.max(0.2, Math.min(3.0, Math.round((CONFIG.FLYER_SPEED_BASE + amount) * 10) / 10));
+    document.getElementById("val-speed").textContent = CONFIG.FLYER_SPEED_BASE;
+  }
+}
+
+document.getElementById("cfgBtn").addEventListener("click", (e) => {
+  e.stopPropagation();
+  toggleConfigPanel();
+});
+
 // ============================================================================
-// 2. 音響・BGMシステム (Ravel-Borelo.mp3 再生対応)
+// 2. 音響・BGMシステム
 // ============================================================================
 class SoundSystem {
   constructor() {
     this.ctx = null;
     this.bgmAudio = document.getElementById("bgmAudio");
     if (this.bgmAudio) {
-      this.bgmAudio.volume = 0.35; // 控えめで心地よい音量
+      this.bgmAudio.volume = 0.35;
     }
   }
 
@@ -322,7 +390,7 @@ const stars = Array.from({ length: 70 }, () => ({
 
 let currentStage = 1;
 let gameState = "TITLE";
-let pauseMenuSelection = 0; // 0: ゲームに戻る, 1: タイトルに戻る
+let pauseMenuSelection = 0;
 let scrollX = 0;
 let scrollY = 0;
 let stageLength = 2400;
@@ -330,7 +398,7 @@ let score = 0;
 let gameFrame = 0;
 let transitionTimer = 0;
 let deathTimer = 0;
-let nextSpawnDelay = 120;
+let nextSpawnDelay = 90;
 let squadSpawnCounter = 0;
 
 let isInvincible = false;
@@ -428,7 +496,7 @@ function triggerGameAction() {
 }
 
 container.addEventListener("mousedown", (e) => {
-  if (e.target === godBtn) return;
+  if (e.target.closest('#config-panel') || e.target === godBtn || e.target.id === 'cfgBtn') return;
   e.preventDefault();
   window.focus();
   triggerGameAction();
@@ -652,7 +720,7 @@ function startGame(stageNum = 1) {
   gameFrame = 0;
   scrollX = 0;
   scrollY = 0;
-  nextSpawnDelay = 120;
+  nextSpawnDelay = 80;
   squadSpawnCounter = 0;
   particles = [];
   floatingTexts = [];
@@ -820,63 +888,62 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. 編隊＆キャリア敵制御
+// 7. 編隊＆キャリア敵制御 (ガンガン湧くように修正)
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
 
-  if (squads.length === 0 && enemies.length === 0) {
-    nextSpawnDelay--;
-    if (nextSpawnDelay <= 0) {
-      nextSpawnDelay = 130;
-      squadSpawnCounter++;
+  // 💡全滅を待たず、一定時間ごとに次々とガンガン編隊を投入
+  nextSpawnDelay--;
+  if (nextSpawnDelay <= 0) {
+    nextSpawnDelay = spawnIntervalSetting; // 調整可能な間隔
+    squadSpawnCounter++;
 
-      const squadId = Date.now() + Math.random();
-      let patternType = "WAVE_BIG";
-      
-      if (squadSpawnCounter <= 2) {
-        patternType = "STRAIGHT";
-      } else {
-        const randType = Math.random();
-        if (currentStage === 2) {
-          patternType = randType < 0.4 ? "STRAIGHT" : (randType < 0.7 ? "VERTICAL_DOWN" : "WAVE_SMALL");
-        } else {
-          patternType = randType < 0.35 ? "STRAIGHT" : (randType < 0.7 ? "WAVE_BIG" : "WAVE_SMALL");
-        }
-      }
-      
-      let startX = CONFIG.CANVAS_WIDTH + 24;
-      let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
-
+    const squadId = Date.now() + Math.random();
+    let patternType = "WAVE_BIG";
+    
+    if (squadSpawnCounter <= 2) {
+      patternType = "STRAIGHT";
+    } else {
+      const randType = Math.random();
       if (currentStage === 2) {
-        if (scrollX < stageLength * 0.5) {
-          startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
-          startY = -24;
-        } else {
-          startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
-          startY = CONFIG.CANVAS_HEIGHT + 24;
-        }
+        patternType = randType < 0.4 ? "STRAIGHT" : (randType < 0.7 ? "VERTICAL_DOWN" : "WAVE_SMALL");
+      } else {
+        patternType = randType < 0.35 ? "STRAIGHT" : (randType < 0.7 ? "WAVE_BIG" : "WAVE_SMALL");
       }
-
-      const isCarrier = Math.random() < 0.45;
-      const enemyType = isCarrier ? "CARRIER" : "NORMAL";
-
-      squads.push({
-        id: squadId,
-        total: 10,
-        remaining: 10,
-        lastSpawnFrame: gameFrame,
-        spawnedCount: 0,
-        startX: startX,
-        startY: startY,
-        patternType: patternType,
-        enemyType: enemyType
-      });
     }
+    
+    let startX = CONFIG.CANVAS_WIDTH + 24;
+    let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
+
+    if (currentStage === 2) {
+      if (scrollX < stageLength * 0.5) {
+        startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
+        startY = -24;
+      } else {
+        startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
+        startY = CONFIG.CANVAS_HEIGHT + 24;
+      }
+    }
+
+    const isCarrier = Math.random() < 0.45;
+    const enemyType = isCarrier ? "CARRIER" : "NORMAL";
+
+    squads.push({
+      id: squadId,
+      total: 10,
+      remaining: 10,
+      lastSpawnFrame: gameFrame,
+      spawnedCount: 0,
+      startX: startX,
+      startY: startY,
+      patternType: patternType,
+      enemyType: enemyType
+    });
   }
 
   for (let s of squads) {
-    const delay = 22;
+    const delay = 20;
 
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
       s.lastSpawnFrame = gameFrame;
@@ -899,6 +966,9 @@ function updateSquadSpawning() {
       });
     }
   }
+
+  // 不要になった空の編隊データをクリーンアップ
+  squads = squads.filter(s => s.remaining > 0);
 }
 
 function updateEnemies() {
@@ -1007,8 +1077,6 @@ function destroyEnemy(index, e) {
     if (squad) {
       squad.remaining--;
       if (squad.remaining <= 0) {
-        squads = squads.filter(sq => sq.id !== e.squadId);
-
         const nextNum = forces.length + droppedForceItems.length + 1;
         const targetEdgeX = 350 + Math.random() * 220;
         const targetEdgeY = 60 + Math.random() * (CONFIG.CANVAS_HEIGHT - 120);
@@ -1541,7 +1609,7 @@ function drawOverlay() {
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "13px monospace";
     ctx.fillText("・スマホ: 左ドラッグ(移動) / 右タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 425);
-    ctx.fillText("・ESCキーでポーズメニューを表示", CONFIG.CANVAS_WIDTH / 2, 455);
+    ctx.fillText("・ESCキー / ⚙ 調整ボタンでバランス変更可能", CONFIG.CANVAS_WIDTH / 2, 455);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
