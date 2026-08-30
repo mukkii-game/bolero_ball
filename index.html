@@ -937,8 +937,8 @@ function updateSquadSpawning() {
 
   let effectiveDelay = spawnIntervalSetting;
   if (currentWave === 1) effectiveDelay = 240;
-  else if (currentWave === 2) effectiveDelay = 180; // 💡Wave2は少し控えめにラクに
-  else if (currentWave === 3) effectiveDelay = 140; // 💡Wave3も少し控えめにラクに
+  else if (currentWave === 2) effectiveDelay = 180;
+  else if (currentWave === 3) effectiveDelay = 140;
   else if (currentWave >= 4) effectiveDelay = Math.max(35, spawnIntervalSetting - (currentWave * 8));
 
   nextSpawnDelay--;
@@ -951,7 +951,6 @@ function updateSquadSpawning() {
     let startX = CONFIG.CANVAS_WIDTH + 24;
     let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
 
-    // 💡 Wave 1は常に直線（STRAIGHT）のみ
     if (currentWave === 1) {
       patternType = "STRAIGHT";
     } else if (currentWave === 4) {
@@ -975,15 +974,15 @@ function updateSquadSpawning() {
     if (currentWave >= 2) {
       const r = Math.random();
       if (r < 0.12) {
-        enemyType = "FORCE_CARRIER"; // 緑（鉄球）
+        enemyType = "FORCE_CARRIER";
       } else if (r < 0.30) {
-        enemyType = "SPEED_CARRIER"; // 黄色（スピードアップ）
+        enemyType = "SPEED_CARRIER";
       }
     }
 
     squads.push({
       id: squadId,
-      total: (currentWave === 2 || currentWave === 3) ? 6 : 10, // 💡Wave2,3は編隊の数も少し減らしてラクに
+      total: (currentWave === 2 || currentWave === 3) ? 6 : 10,
       remaining: (currentWave === 2 || currentWave === 3) ? 6 : 10,
       lastSpawnFrame: gameFrame,
       spawnedCount: 0,
@@ -1007,8 +1006,8 @@ function updateSquadSpawning() {
         y: s.startY,
         baseX: s.startX,
         baseY: s.startY,
-        // 💡重要：曲線の敵（WAVE_BIG等）は位相（anim）を全員同じ(0)にすることで、全員がまったく同じ軌道を通るようにする
-        anim: 0, 
+        // 💡重要：X座標ベースでサインカーブを計算するため、初期の進んだ距離（メンバーのインデックス×間隔）をオフセットとして持たせる
+        spawnIndex: s.spawnedCount,
         patternType: s.patternType,
         enemyType: s.enemyType,
         hpVal: s.enemyType !== "NORMAL" ? 3.0 : 2.0,
@@ -1034,22 +1033,24 @@ function updateEnemies() {
 
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
-    e.anim += 0.04;
+
+    // 💡曲線の軌道を「現在進んだX座標（距離）」を基準に計算することで、後から来る敵も先頭と100%同じルートを通る（待ち伏せ可能に！）
+    const distanceTraveled = (CONFIG.CANVAS_WIDTH + 50) - e.x + (e.spawnIndex * 28);
 
     if (e.patternType === "WAVE_BIG") {
       e.x -= currentSpeed * 1.2;
-      e.y = e.baseY + Math.sin(e.anim) * 95;
+      e.y = e.baseY + Math.sin(distanceTraveled * 0.035) * 95;
     } else if (e.patternType === "WAVE_SMALL") {
       e.x -= currentSpeed * 1.4;
-      e.y = e.baseY + Math.sin(e.anim) * 32;
+      e.y = e.baseY + Math.sin(distanceTraveled * 0.05) * 32;
     } else if (e.patternType === "STRAIGHT") {
       e.x -= currentSpeed * 1.6;
     } else if (e.patternType === "VERTICAL_DOWN") {
       e.y += currentSpeed * 1.4;
-      e.x = e.baseX + Math.sin(e.anim) * 45;
+      e.x = e.baseX + Math.sin(distanceTraveled * 0.035) * 45;
     } else if (e.patternType === "VERTICAL_UP") {
       e.y -= currentSpeed * 1.4;
-      e.x = e.baseX + Math.sin(e.anim) * 45;
+      e.x = e.baseX + Math.sin(distanceTraveled * 0.035) * 45;
     }
 
     if (e.x < -80 || e.x > CONFIG.CANVAS_WIDTH + 80 || e.y > CONFIG.CANVAS_HEIGHT + 80 || e.y < -80) {
@@ -1518,7 +1519,6 @@ function drawEnemies() {
     ctx.translate(e.x, e.y);
 
     if (e.enemyType === "FORCE_CARRIER") {
-      // 💡オプション（鉄球）を落とす緑色の敵
       ctx.fillStyle = "#2ed573";
       ctx.beginPath();
       ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
@@ -1528,7 +1528,6 @@ function drawEnemies() {
       ctx.arc(0, 0, e.radius * 0.5, 0, Math.PI * 2);
       ctx.fill();
     } else if (e.enemyType === "SPEED_CARRIER") {
-      // 💡スピードアップを落とす黄色の敵
       ctx.fillStyle = "#ffe600";
       ctx.beginPath();
       ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
@@ -1538,7 +1537,6 @@ function drawEnemies() {
       ctx.arc(0, 0, e.radius * 0.5, 0, Math.PI * 2);
       ctx.fill();
     } else {
-      // 💡通常敵（紫）
       ctx.fillStyle = "#ff9ff3";
       ctx.beginPath();
       ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
@@ -1560,7 +1558,6 @@ function drawEnemies() {
     const isSpeed = item.itemType === "SPEED_UP";
 
     if (isSpeed) {
-      // 💡スピードアップアイテム：美しい黄色い「光のたま」
       const glowRadius = item.radius + 12 + flash * 8;
       const auraGrad = ctx.createRadialGradient(0, 0, 2, 0, 0, glowRadius);
       auraGrad.addColorStop(0, "#ffffff");
@@ -1577,7 +1574,6 @@ function drawEnemies() {
       ctx.textBaseline = "middle";
       ctx.fillText("SPEED", 0, 1);
     } else {
-      // 💡フォース（オプション）アイテム：前のピカピカの鉄球のまま
       const glowRadius = item.radius + 12 + flash * 8;
       const auraGrad = ctx.createRadialGradient(0, 0, item.radius, 0, 0, glowRadius);
       auraGrad.addColorStop(0, "rgba(84, 160, 255, 0.8)");
