@@ -103,7 +103,7 @@
     }
     #instructions {
       margin-top: 10px;
-      font-size: 13px;
+      font-size: 12px;
       color: #ff9ff3;
       text-align: center;
       line-height: 1.5;
@@ -146,7 +146,8 @@
 </div>
 
 <div id="instructions">
-  [ 操作 ]: <span>左半分ドラッグ</span> (移動) | <span>右半分タップ</span> (発射・帰還) | <span>ESC</span> (ポーズ)
+  [ PC操作 ]: <span>WASD / 矢印キー</span> (移動) | <span>N / M / スペース</span> (発射・帰還) | <span>ESC</span> (ポーズ)<br>
+  [ スマホ操作 ]: <span>左半分ドラッグ</span> (移動) | <span>右半分タップ</span> (発射・帰還)
 </div>
 
 <audio id="bgmAudio" src="Ravel-Borelo.mp3" loop preload="auto"></audio>
@@ -189,7 +190,7 @@ const CONFIG = {
   COLOR_HUD_TEXT: "#54a0ff"
 };
 
-let spawnIntervalSetting = 75; // 💡ガンガン湧く初期値
+let spawnIntervalSetting = 75;
 
 function toggleConfigPanel() {
   const panel = document.getElementById("config-panel");
@@ -398,7 +399,7 @@ let score = 0;
 let gameFrame = 0;
 let transitionTimer = 0;
 let deathTimer = 0;
-let nextSpawnDelay = 90;
+let nextSpawnDelay = 80;
 let squadSpawnCounter = 0;
 
 let isInvincible = false;
@@ -888,20 +889,20 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. 編隊＆キャリア敵制御 (ガンガン湧くように修正)
+// 7. 編隊＆キャリア敵制御 (ガンガン湧く仕様)
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
 
-  // 💡全滅を待たず、一定時間ごとに次々とガンガン編隊を投入
   nextSpawnDelay--;
   if (nextSpawnDelay <= 0) {
-    nextSpawnDelay = spawnIntervalSetting; // 調整可能な間隔
+    nextSpawnDelay = spawnIntervalSetting;
     squadSpawnCounter++;
 
     const squadId = Date.now() + Math.random();
     let patternType = "WAVE_BIG";
     
+    // 最初の2編隊はどの面でも直線移動
     if (squadSpawnCounter <= 2) {
       patternType = "STRAIGHT";
     } else {
@@ -967,7 +968,6 @@ function updateSquadSpawning() {
     }
   }
 
-  // 不要になった空の編隊データをクリーンアップ
   squads = squads.filter(s => s.remaining > 0);
 }
 
@@ -1607,9 +1607,10 @@ function drawOverlay() {
     ctx.fillText("▶ ゲーム開始 / スタート", CONFIG.CANVAS_WIDTH / 2, 355);
 
     ctx.fillStyle = "#e0e6ed";
-    ctx.font = "13px monospace";
-    ctx.fillText("・スマホ: 左ドラッグ(移動) / 右タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 425);
-    ctx.fillText("・ESCキー / ⚙ 調整ボタンでバランス変更可能", CONFIG.CANVAS_WIDTH / 2, 455);
+    ctx.font = "12px monospace";
+    ctx.fillText("・PC: WASD/矢印(移動) | N/M/Space(発射) | ESC(ポーズ)", CONFIG.CANVAS_WIDTH / 2, 420);
+    ctx.fillText("・スマホ: 左ドラッグ(移動) | 右タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 445);
+    ctx.fillText("・右上 ⚙調整ボタン で敵の湧きや速度を変更可能", CONFIG.CANVAS_WIDTH / 2, 470);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
