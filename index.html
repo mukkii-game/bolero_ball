@@ -131,7 +131,7 @@
       <button class="cfg-btn" onclick="adjustParam('spawn', 15)">+</button>
     </div>
     <div class="cfg-row">
-      敵スピード (Speed): <span id="val-speed">1.15</span>
+      敵スピード (Speed): <span id="val-speed">0.92</span>
       <button class="cfg-btn" onclick="adjustParam('speed', -0.1)">-</button>
       <button class="cfg-btn" onclick="adjustParam('speed', 0.1)">+</button>
     </div>
@@ -149,7 +149,7 @@
   [ スマホ操作 ]: <span>左半分ドラッグ</span> (移動) | <span>右半分タップ</span> (発射・帰還)
 </div>
 
-<audio id="bgmAudio" src="Ravel-Borelo.mp3" loop preload="auto"></audio>
+<audio id="bgmAudio" src="Ravel-Borelo.mp3" loop preload="auto" playsinline></audio>
 
 <script>
 // ============================================================================
@@ -172,7 +172,7 @@ const CONFIG = {
   FORCE_DAMAGE_BODY: 0.8,
   
   ENEMY_RADIUS: 18,
-  FLYER_SPEED_BASE: 1.15,
+  FLYER_SPEED_BASE: 0.92, // 2割ダウン維持
   
   BOSS_CORE_CYCLE: 160,
   BOSS_CORE_OPEN_TIME: 90,
@@ -201,7 +201,7 @@ function adjustParam(type, amount) {
     spawnIntervalSetting = Math.max(20, Math.min(300, spawnIntervalSetting + amount));
     document.getElementById("val-spawn").textContent = spawnIntervalSetting;
   } else if (type === 'speed') {
-    CONFIG.FLYER_SPEED_BASE = Math.max(0.2, Math.min(3.0, Math.round((CONFIG.FLYER_SPEED_BASE + amount) * 10) / 10));
+    CONFIG.FLYER_SPEED_BASE = Math.max(0.2, Math.min(3.0, Math.round((CONFIG.FLYER_SPEED_BASE + amount) * 100) / 100));
     document.getElementById("val-speed").textContent = CONFIG.FLYER_SPEED_BASE;
   }
 }
@@ -217,10 +217,14 @@ document.getElementById("cfgBtn").addEventListener("click", (e) => {
 class SoundSystem {
   constructor() {
     this.ctx = null;
-    this.bgmAudio = document.getElementById("bgmAudio");
-    if (this.bgmAudio) {
-      this.bgmAudio.volume = 0.35;
+    this.bgmAudio = null;
+  }
+
+  getBgm() {
+    if (!this.bgmAudio) {
+      this.bgmAudio = document.getElementById("bgmAudio");
     }
+    return this.bgmAudio;
   }
 
   init() {
@@ -237,17 +241,25 @@ class SoundSystem {
   }
 
   playBGM() {
-    if (this.bgmAudio) {
-      this.bgmAudio.play().catch(err => {
-        console.log("BGM autoplay waiting user interaction:", err);
-      });
+    const bgm = this.getBgm();
+    if (bgm) {
+      bgm.volume = 0.35;
+      if (bgm.paused) {
+        const p = bgm.play();
+        if (p !== undefined) {
+          p.catch(err => {
+            console.log("Waiting user action for BGM:", err);
+          });
+        }
+      }
     }
   }
 
   stopBGM() {
-    if (this.bgmAudio) {
-      this.bgmAudio.pause();
-      this.bgmAudio.currentTime = 0;
+    const bgm = this.getBgm();
+    if (bgm) {
+      bgm.pause();
+      bgm.currentTime = 0;
     }
   }
 
@@ -404,8 +416,8 @@ let nextSpawnDelay = 60;
 let squadSpawnCounter = 0;
 let creditFrame = 0;
 
-let wave1SpawnedCount = 0; // 💡Wave1で生成した編隊数（緑、緑、紫の計3編隊）
-let carrierCounter = 0;     // 💡スピードアップの4回に1回カウント
+let wave1SpawnedCount = 0;
+let carrierCounter = 0;
 
 let isInvincible = false;
 
@@ -501,6 +513,7 @@ function triggerGameAction() {
   if (gameState === "PAUSE") {
     if (pauseMenuSelection === 0) {
       gameState = "PLAYING";
+      sounds.playBGM();
     } else {
       sounds.stopBGM();
       gameState = "TITLE";
@@ -656,6 +669,7 @@ window.addEventListener("keydown", (e) => {
       handled = true;
     } else if (gameState === "PAUSE") {
       gameState = "PLAYING";
+      sounds.playBGM();
       handled = true;
     }
   }
@@ -671,6 +685,7 @@ window.addEventListener("keydown", (e) => {
         gameState = "TITLE";
       } else {
         gameState = "PLAYING";
+        sounds.playBGM();
       }
       handled = true;
     }
@@ -911,7 +926,7 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. 6ウェーブ制 ＆ アイテム・敵管理（完全検証済み）
+// 7. 6ウェーブ制 ＆ アイテム・敵管理
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
@@ -940,7 +955,7 @@ function updateSquadSpawning() {
     return;
   }
 
-  // 💡Wave 1：最初の2編隊は緑(FORCE)、3編隊目は紫(NORMAL)、全3編隊・直線
+  // Wave 1：緑(FORCE)、緑(FORCE)、紫(NORMAL)の全3編隊・直線
   if (currentWave === 1) {
     if (wave1SpawnedCount < 3) {
       nextSpawnDelay--;
@@ -948,7 +963,7 @@ function updateSquadSpawning() {
         nextSpawnDelay = 180;
         let enemyType = "NORMAL";
         if (wave1SpawnedCount === 0 || wave1SpawnedCount === 1) {
-          enemyType = "FORCE_CARRIER"; // 最初の2編隊は緑（鉄球）
+          enemyType = "FORCE_CARRIER";
         }
         squads.push({
           id: Date.now() + Math.random(),
@@ -965,7 +980,7 @@ function updateSquadSpawning() {
       }
     }
   } else {
-    // 💡Wave 2〜6：Wave2,3は半分の敵密度（5機・長間隔）、Wave4以降は通常密度
+    // Wave 2〜6のスポーン
     let effectiveDelay = spawnIntervalSetting;
     if (currentWave === 2) effectiveDelay = 240;
     else if (currentWave === 3) effectiveDelay = 200;
@@ -982,34 +997,50 @@ function updateSquadSpawning() {
       let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
 
       const randPattern = Math.random();
-      if (currentWave === 4) {
-        startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
-        startY = -24;
-        patternType = "VERTICAL_DOWN";
+      if (currentWave === 3) {
+        if (randPattern < 0.6) {
+          startX = 120 + Math.random() * (CONFIG.CANVAS_WIDTH - 240);
+          startY = -24;
+          patternType = "VERTICAL_DOWN";
+        } else {
+          patternType = "STRAIGHT";
+        }
+      } else if (currentWave === 4) {
+        if (randPattern < 0.6) {
+          startX = 120 + Math.random() * (CONFIG.CANVAS_WIDTH - 240);
+          startY = CONFIG.CANVAS_HEIGHT + 24;
+          patternType = "VERTICAL_UP";
+        } else {
+          patternType = "STRAIGHT";
+        }
       } else if (currentWave === 5) {
-        startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
-        startY = CONFIG.CANVAS_HEIGHT + 24;
-        patternType = "VERTICAL_UP";
+        if (randPattern < 0.5) {
+          startX = 120 + Math.random() * (CONFIG.CANVAS_WIDTH - 240);
+          startY = -24;
+          patternType = "VERTICAL_DOWN";
+        } else {
+          startX = 120 + Math.random() * (CONFIG.CANVAS_WIDTH - 240);
+          startY = CONFIG.CANVAS_HEIGHT + 24;
+          patternType = "VERTICAL_UP";
+        }
       } else if (currentWave === 6) {
         const randDir = Math.random();
-        if (randDir < 0.33) { startX = CONFIG.CANVAS_WIDTH + 24; startY = Math.random() * CONFIG.CANVAS_HEIGHT; patternType = "WAVE_BIG"; }
-        else if (randDir < 0.66) { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = -24; patternType = "VERTICAL_DOWN"; }
-        else { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = CONFIG.CANVAS_HEIGHT + 24; patternType = "VERTICAL_UP"; }
+        if (randDir < 0.35) { startX = CONFIG.CANVAS_WIDTH + 24; startY = Math.random() * CONFIG.CANVAS_HEIGHT; patternType = "WAVE_BIG"; }
+        else if (randDir < 0.68) { startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200); startY = -24; patternType = "VERTICAL_DOWN"; }
+        else { startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200); startY = CONFIG.CANVAS_HEIGHT + 24; patternType = "VERTICAL_UP"; }
       } else {
-        // 💡直線を40%しっかり混ぜる
         patternType = randPattern < 0.4 ? "STRAIGHT" : (Math.random() < 0.5 ? "WAVE_BIG" : "WAVE_SMALL");
       }
 
-      // 💡スピードアップは4回に1回の確定カウント制
       let enemyType = "NORMAL";
       if (currentWave >= 2) {
         const r = Math.random();
-        if (r < 0.12) {
-          enemyType = "FORCE_CARRIER"; // 緑（鉄球）
+        if (r < 0.14) {
+          enemyType = "FORCE_CARRIER";
         } else {
           carrierCounter++;
           if (carrierCounter % 4 === 0) {
-            enemyType = "SPEED_CARRIER"; // 黄色（スピードアップ）
+            enemyType = "SPEED_CARRIER";
           }
         }
       }
@@ -1030,7 +1061,6 @@ function updateSquadSpawning() {
     }
   }
 
-  // 💡敵を1機ずつ戦場に出現させる処理
   for (let s of squads) {
     const delay = 22;
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
@@ -1070,7 +1100,7 @@ function updateEnemies() {
   for (let i = enemies.length - 1; i >= 0; i--) {
     const e = enemies[i];
 
-    // 💡空間固定レール方式：X座標のみから高さを計算するため、先頭と後続が100%完全に同じ軌跡を通る
+    // 空間固定レール方式（同じ位置を通る）
     if (e.patternType === "WAVE_BIG") {
       e.x -= currentSpeed * 1.2;
       e.y = e.baseY + Math.sin((CONFIG.CANVAS_WIDTH - e.x) * 0.035) * 95;
@@ -1080,14 +1110,14 @@ function updateEnemies() {
     } else if (e.patternType === "STRAIGHT") {
       e.x -= currentSpeed * 1.6;
     } else if (e.patternType === "VERTICAL_DOWN") {
-      e.y += currentSpeed * 1.4;
-      e.x = e.baseX + Math.sin((CONFIG.CANVAS_HEIGHT - e.y) * 0.035) * 45;
+      e.y += currentSpeed * 1.3;
+      e.x = e.baseX + Math.sin(e.y * 0.03) * 90;
     } else if (e.patternType === "VERTICAL_UP") {
-      e.y -= currentSpeed * 1.4;
-      e.x = e.baseX + Math.sin((CONFIG.CANVAS_HEIGHT - e.y) * 0.035) * 45;
+      e.y -= currentSpeed * 1.3;
+      e.x = e.baseX + Math.sin((CONFIG.CANVAS_HEIGHT - e.y) * 0.03) * 90;
     }
 
-    if (e.x < -80 || e.x > CONFIG.CANVAS_WIDTH + 80 || e.y > CONFIG.CANVAS_HEIGHT + 80 || e.y < -80) {
+    if (e.x < -120 || e.x > CONFIG.CANVAS_WIDTH + 120 || e.y > CONFIG.CANVAS_HEIGHT + 120 || e.y < -120) {
       enemies.splice(i, 1);
       continue;
     }
@@ -1327,7 +1357,7 @@ function checkBossDefeat(bx, by) {
     score += 100000;
     sounds.stopBGM();
     gameState = "CREDITS";
-    creditFrame = 0; // 5秒間入力ガードのタイマーをリセット
+    creditFrame = 0;
   }
 }
 
@@ -1814,107 +1844,16 @@ function drawOverlay() {
 
     ctx.fillStyle = pauseMenuSelection === 0 ? "#ffe600" : "#ffffff";
     ctx.font = "bold 22px monospace";
-    ctx.fillText(pauseMenuSelection === 0 ? "▶ ゲームに戻る" : "  ゲームに戻る", CONFIG.CANVAS_WIDTH / 2, 310);
+    ctx.fillText(pauseMenuSelection === 0 ? "▶ ゲームに戻る" : "　 ゲームに戻る", CONFIG.CANVAS_WIDTH / 2, 310);
 
     ctx.fillStyle = pauseMenuSelection === 1 ? "#ffe600" : "#ffffff";
     ctx.font = "bold 22px monospace";
-    ctx.fillText(pauseMenuSelection === 1 ? "▶ タイトル画面に戻る" : "  タイトル画面に戻る", CONFIG.CANVAS_WIDTH / 2, 380);
+    ctx.fillText(pauseMenuSelection === 1 ? "▶ タイトル画面に戻る" : "　 タイトル画面に戻る", CONFIG.CANVAS_WIDTH / 2, 380);
 
     ctx.fillStyle = "#ff9ff3";
     ctx.font = "14px monospace";
     ctx.fillText("[ ESCキー または タップで決定 ]", CONFIG.CANVAS_WIDTH / 2, 480);
   } else if (gameState === "GAMEOVER") {
     ctx.fillStyle = "rgba(35, 10, 15, 0.9)";
-    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
-
-    ctx.fillStyle = "#ff6b81";
-    ctx.font = "bold 38px monospace";
-    ctx.fillText("GAME OVER", CONFIG.CANVAS_WIDTH / 2, 240);
-
-    ctx.fillStyle = "#54a0ff";
-    ctx.font = "bold 20px monospace";
-    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 295);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "15px monospace";
-    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 345);
-
-    const blink = Math.floor(Date.now() / 350) % 2 === 0;
-    if (blink) {
-      ctx.fillStyle = "#ffe66d";
-      ctx.font = "bold 16px monospace";
-      ctx.fillText("[ TAP / CLICK TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 440);
-    }
-  } else if (gameState === "CREDITS") {
-    ctx.fillStyle = "rgba(10, 20, 35, 0.96)";
-    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
-
-    ctx.fillStyle = "#2ed573";
-    ctx.font = "bold 44px monospace";
-    ctx.fillText("Congratirations!!", CONFIG.CANVAS_WIDTH / 2, 160);
-
-    ctx.fillStyle = "#ffe600";
-    ctx.font = "bold 24px monospace";
-    ctx.fillText("Thank you for playing!", CONFIG.CANVAS_WIDTH / 2, 250);
-
-    ctx.fillStyle = "#54a0ff";
-    ctx.font = "bold 22px monospace";
-    ctx.fillText("Created by mukkii", CONFIG.CANVAS_WIDTH / 2, 350);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "16px monospace";
-    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 430);
-
-    if (creditFrame >= 300) {
-      const blink = Math.floor(Date.now() / 400) % 2 === 0;
-      if (blink) {
-        ctx.fillStyle = "#ffe600";
-        ctx.font = "bold 20px monospace";
-        ctx.fillText("- PRESS ANY BUTTON -", CONFIG.CANVAS_WIDTH / 2, 515);
-      }
-    }
-  }
-
-  ctx.restore();
-}
-
-function render() {
-  ctx.fillStyle = CONFIG.COLOR_BG;
-  ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
-  stars.forEach(s => {
-    ctx.fillStyle = `rgba(200, 225, 255, ${s.alpha})`;
-    ctx.fillRect(s.x, s.y, s.size, s.size);
-  });
-
-  particles.forEach(p => {
-    ctx.fillStyle = p.color;
-    ctx.globalAlpha = Math.max(0, p.alpha);
-    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
-  });
-  ctx.globalAlpha = 1.0;
-
-  floatingTexts.forEach(ft => {
-    ctx.save();
-    ctx.fillStyle = `rgba(255, 230, 109, ${ft.alpha})`;
-    ctx.font = "bold 13px monospace";
-    ctx.fillText(ft.text, ft.x, ft.y);
-    ctx.restore();
-  });
-
-  drawEnemies();
-  drawPlayer(player.x, player.y);
-  forces.forEach(f => drawForce(f));
-  drawHUD();
-  drawOverlay();
-}
-
-function gameLoop() {
-  update();
-  render();
-  requestAnimationFrame(gameLoop);
-}
-
-requestAnimationFrame(gameLoop);
-</script>
-</body>
-</html>
+    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH
+                 
