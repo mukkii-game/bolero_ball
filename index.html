@@ -1,0 +1,1587 @@
+スマホのブラウザでダウンロードせずにそのまま画面内で直接「開く（プレイする）」ためのプレビューボタンや、ゲームをすぐに起動できる分かりやすいUIボタン（スタートボタン）がしっかりと表示されるように、コードと出力形式を整えました。
+画面内のタイトル部分にある大きなボタン、またはチャットのプレビュー機能から、いつでもすぐにスマホで直接開いて遊ぶことができます。
+以下の最新完全版コードを反映したゲームをお楽しみください！
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>まあるぃタイプ</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      touch-action: none;
+    }
+    body {
+      background-color: #0f1020;
+      color: #e0e6ed;
+      font-family: 'Courier New', Courier, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    #game-container {
+      position: relative;
+      box-shadow: 0 0 35px rgba(255, 107, 129, 0.3), 0 0 15px rgba(0, 0, 0, 0.8);
+      border: 3px solid #ff6b81;
+      border-radius: 16px;
+      overflow: hidden;
+      background: #000;
+      cursor: crosshair;
+    }
+    canvas {
+      display: block;
+      background-color: #0f1020;
+      image-rendering: pixelated;
+    }
+    .scanlines {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: linear-gradient(
+        rgba(18, 16, 16, 0) 50%, 
+        rgba(0, 0, 0, 0.25) 50%
+      );
+      background-size: 100% 4px;
+      pointer-events: none;
+    }
+    #instructions {
+      margin-top: 10px;
+      font-size: 13px;
+      color: #ff9ff3;
+      text-align: center;
+      line-height: 1.5;
+      letter-spacing: 0.5px;
+    }
+    #instructions span {
+      color: #54a0ff;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+<div id="game-container">
+  <canvas id="gameCanvas" width="640" height="640"></canvas>
+  <div class="scanlines"></div>
+</div>
+
+<div id="instructions">
+  [ PC操作 ]: <span>WASD / 方向キー</span> (移動) | <span>左クリック / SPACE</span> (発射・帰還) | <span>I</span> (無敵切替)<br>
+  [ スマホ操作 ]: <span>左半分ドラッグ</span> (相対移動) | <span>右半分タップ</span> (鉄球発射・帰還)
+</div>
+
+<audio id="bgmAudio" src="Ravel-Borelo.mp3" loop preload="auto"></audio>
+
+<script>
+// ============================================================================
+// 1. 調整用パラメータ定義 (CONFIG)
+// ============================================================================
+const CONFIG = {
+  CANVAS_WIDTH: 640,
+  CANVAS_HEIGHT: 640,
+  
+  SCROLL_SPEED: 0.45,
+  
+  PLAYER_RADIUS: 70,
+  PLAYER_SPEED: 3.2,
+  
+  FORCE_RADIUS: 22,
+  FORCE_LAUNCH_SPEED: 7.2,
+  FORCE_RETURN_SPEED: 7.2,
+  FORCE_BOUNCE_OFFSET: 15,
+  FORCE_DAMAGE_FRAME: 2.2,
+  FORCE_DAMAGE_BODY: 0.8,
+  
+  ENEMY_RADIUS: 18,
+  FLYER_SPEED_BASE: 0.68,
+  
+  BOSS_CORE_CYCLE: 160,
+  BOSS_CORE_OPEN_TIME: 90,
+  BOSS_MAX_HP: 5000,
+  
+  MASTER_VOLUME: 0.22,
+  
+  COLOR_BG: "#0f1020",
+  COLOR_PLAYER: "#e0e6ed",
+  COLOR_PLAYER_CORE: "#54a0ff",
+  COLOR_IRON_LIGHT: "#eceff1",
+  COLOR_IRON_BASE: "#78909c",
+  COLOR_IRON_DARK: "#37474f",
+  COLOR_HUD_TEXT: "#54a0ff"
+};
+
+// ============================================================================
+// 2. 音響・BGMシステム
+// ============================================================================
+class SoundSystem {
+  constructor() {
+    this.ctx = null;
+    this.bgmAudio = document.getElementById("bgmAudio");
+    if (this.bgmAudio) {
+      this.bgmAudio.volume = 0.12;
+    }
+  }
+
+  init() {
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        this.ctx = new AudioCtx();
+      }
+    }
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+    if (this.bgmAudio && this.bgmAudio.paused) {
+      this.bgmAudio.play().catch(() => {});
+    }
+  }
+
+  startBGM() {
+    if (this.bgmAudio) {
+      this.bgmAudio.currentTime = 0;
+      this.bgmAudio.play().catch(() => {});
+    }
+  }
+
+  stopBGM() {
+    if (this.bgmAudio) {
+      this.bgmAudio.pause();
+      this.bgmAudio.currentTime = 0;
+    }
+  }
+
+  playLaunch() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(520, t);
+    osc.frequency.exponentialRampToValueAtTime(110, t + 0.16);
+
+    gain.gain.setValueAtTime(CONFIG.MASTER_VOLUME * 0.9, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start(t);
+    osc.stop(t + 0.16);
+  }
+
+  playDock() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc1 = this.ctx.createOscillator();
+    const gain1 = this.ctx.createGain();
+    osc1.type = 'square';
+    osc1.frequency.setValueAtTime(880, t);
+    osc1.frequency.exponentialRampToValueAtTime(440, t + 0.05);
+    gain1.gain.setValueAtTime(CONFIG.MASTER_VOLUME * 0.6, t);
+    gain1.gain.exponentialRampToValueAtTime(0.001, t + 0.05);
+    osc1.connect(gain1);
+    gain1.connect(this.ctx.destination);
+    osc1.start(t);
+    osc1.stop(t + 0.05);
+  }
+
+  playGet() {
+    if (!this.ctx) return;
+    const notes = [523.25, 659.25, 783.99, 1046.50];
+    notes.forEach((freq, idx) => {
+      const t = this.ctx.currentTime + idx * 0.045;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, t);
+      gain.gain.setValueAtTime(CONFIG.MASTER_VOLUME * 0.8, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(t);
+      osc.stop(t + 0.12);
+    });
+  }
+
+  playEnemyDestroy() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const bufferSize = this.ctx.sampleRate * 0.15;
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(1000, t);
+    filter.frequency.exponentialRampToValueAtTime(120, t + 0.14);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(CONFIG.MASTER_VOLUME * 1.1, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    noise.start(t);
+    noise.stop(t + 0.15);
+  }
+
+  playPlayerDeath() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const bufferSize = this.ctx.sampleRate * 0.8;
+    const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = (Math.random() * 2 - 1);
+    }
+    const noise = this.ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const filter = this.ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(600, t);
+    filter.frequency.exponentialRampToValueAtTime(50, t + 0.75);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(CONFIG.MASTER_VOLUME * 1.8, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.75);
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    noise.start(t);
+    noise.stop(t + 0.8);
+  }
+
+  playPierceTick() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(700 + Math.random() * 200, t);
+    osc.frequency.exponentialRampToValueAtTime(200, t + 0.03);
+
+    gain.gain.setValueAtTime(CONFIG.MASTER_VOLUME * 0.45, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+
+    osc.start(t);
+    osc.stop(t + 0.03);
+  }
+}
+
+const sounds = new SoundSystem();
+
+// ============================================================================
+// 3. ゲーム本体変数・オブジェクト
+// ============================================================================
+const container = document.getElementById("game-container");
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+const stars = Array.from({ length: 70 }, () => ({
+  x: Math.random() * CONFIG.CANVAS_WIDTH,
+  y: Math.random() * CONFIG.CANVAS_HEIGHT,
+  speed: 0.15 + Math.random() * 0.5,
+  size: 1 + Math.random() * 2.0,
+  alpha: 0.3 + Math.random() * 0.7
+}));
+
+let currentStage = 1;
+let gameState = "TITLE";
+let scrollX = 0;
+let scrollY = 0;
+let stageLength = 2400;
+let score = 0;
+let gameFrame = 0;
+let transitionTimer = 0;
+let deathTimer = 0;
+let nextSpawnDelay = 180;
+let squadSpawnCounter = 0;
+
+let isInvincible = false;
+
+let particles = [];
+let floatingTexts = [];
+let enemies = [];
+let droppedForceItems = [];
+let squads = [];
+
+const player = {
+  x: 120,
+  y: 320,
+  radius: CONFIG.PLAYER_RADIUS,
+  isDead: false,
+  flameAnim: 0
+};
+
+let forces = [];
+
+const boss = {
+  isActive: false,
+  x: 0,
+  y: 0,
+  hp: CONFIG.BOSS_MAX_HP,
+  maxHp: CONFIG.BOSS_MAX_HP,
+  timer: 0,
+  isCoreOpen: false,
+  legAnim: 0,
+  radius: 95
+};
+
+const keys = {
+  up: false, down: false, left: false, right: false,
+  action: false
+};
+
+// スマホタッチトラッキング管理（左ドラッグ相対移動 ＆ 右タップ発射）
+let leftTouchId = null;
+let leftTouchStartX = 0;
+let leftTouchStartY = 0;
+let playerStartX = 0;
+let playerStartY = 0;
+let touchActive = false;
+
+let rightTouchId = null;
+let rightTouchStartX = 0;
+let rightTouchStartY = 0;
+let rightTouchMoved = false;
+
+// ============================================================================
+// 4. 入力管理 (PC & スマホ対応)
+// ============================================================================
+container.addEventListener("contextmenu", e => e.preventDefault());
+
+function triggerGameAction() {
+  sounds.init();
+  if (gameState === "TITLE") {
+    startGame(1);
+    return;
+  }
+  if (gameState === "GAMEOVER") {
+    startGame(currentStage);
+    return;
+  }
+  if (gameState === "CLEAR") {
+    startGame(1);
+    return;
+  }
+  handleForceAction();
+}
+
+container.addEventListener("mousedown", (e) => {
+  e.preventDefault();
+  window.focus();
+  triggerGameAction();
+});
+
+canvas.addEventListener("touchstart", (e) => {
+  e.preventDefault();
+  sounds.init();
+
+  if (gameState === "TITLE" || gameState === "GAMEOVER" || gameState === "CLEAR") {
+    triggerGameAction();
+    return;
+  }
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    const tx = (t.clientX - rect.left) * scaleX;
+    const ty = (t.clientY - rect.top) * scaleY;
+
+    if (tx < CONFIG.CANVAS_WIDTH / 2) {
+      if (leftTouchId === null) {
+        leftTouchId = t.identifier;
+        leftTouchStartX = tx;
+        leftTouchStartY = ty;
+        playerStartX = player.x;
+        playerStartY = player.y;
+        touchActive = true;
+      }
+    } else {
+      if (rightTouchId === null) {
+        rightTouchId = t.identifier;
+        rightTouchStartX = tx;
+        rightTouchStartY = ty;
+        rightTouchMoved = false;
+      }
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener("touchmove", (e) => {
+  e.preventDefault();
+  if (gameState !== "PLAYING") return;
+
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    const tx = (t.clientX - rect.left) * scaleX;
+    const ty = (t.clientY - rect.top) * scaleY;
+
+    if (t.identifier === leftTouchId) {
+      const dx = tx - leftTouchStartX;
+      const dy = ty - leftTouchStartY;
+      player.x = Math.max(player.radius, Math.min(CONFIG.CANVAS_WIDTH - player.radius, playerStartX + dx));
+      player.y = Math.max(player.radius, Math.min(CONFIG.CANVAS_HEIGHT - player.radius, playerStartY + dy));
+      touchActive = true;
+    } else if (t.identifier === rightTouchId) {
+      const dist = Math.hypot(tx - rightTouchStartX, ty - rightTouchStartY);
+      if (dist > 14) {
+        rightTouchMoved = true;
+      }
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener("touchend", (e) => {
+  e.preventDefault();
+  for (let i = 0; i < e.changedTouches.length; i++) {
+    const t = e.changedTouches[i];
+    if (t.identifier === leftTouchId) {
+      leftTouchId = null;
+      touchActive = false;
+    } else if (t.identifier === rightTouchId) {
+      if (!rightTouchMoved && gameState === "PLAYING") {
+        handleForceAction();
+      }
+      rightTouchId = null;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener("touchcancel", (e) => {
+  e.preventDefault();
+  leftTouchId = null;
+  rightTouchId = null;
+  touchActive = false;
+}, { passive: false });
+
+function isUpKey(e) {
+  const k = (e.key || "").toLowerCase();
+  return e.code === "ArrowUp" || e.code === "KeyW" || k === "w";
+}
+function isDownKey(e) {
+  const k = (e.key || "").toLowerCase();
+  return e.code === "ArrowDown" || e.code === "KeyS" || k === "s";
+}
+function isLeftKey(e) {
+  const k = (e.key || "").toLowerCase();
+  return e.code === "ArrowLeft" || e.code === "KeyA" || k === "a";
+}
+function isRightKey(e) {
+  const k = (e.key || "").toLowerCase();
+  return e.code === "ArrowRight" || e.code === "KeyD" || k === "d";
+}
+function isActionKey(e) {
+  const k = (e.key || "").toLowerCase();
+  return e.code === "KeyN" || e.code === "KeyM" || e.code === "Space" || k === "n" || k === "m" || k === " ";
+}
+
+window.addEventListener("keydown", (e) => {
+  let handled = false;
+  sounds.init();
+
+  if (gameState === "TITLE" || gameState === "GAMEOVER" || gameState === "CLEAR") {
+    if (isUpKey(e) || isDownKey(e) || isLeftKey(e) || isRightKey(e) || isActionKey(e) || e.code === "Enter") {
+      triggerGameAction();
+      handled = true;
+    }
+  }
+
+  if (isUpKey(e)) { keys.up = true; handled = true; }
+  if (isDownKey(e)) { keys.down = true; handled = true; }
+  if (isLeftKey(e)) { keys.left = true; handled = true; }
+  if (isRightKey(e)) { keys.right = true; handled = true; }
+
+  if (e.code === "KeyI" || (e.key || "").toLowerCase() === "i") {
+    isInvincible = !isInvincible;
+    addFloatingText(player.x, player.y - 35, isInvincible ? "INVINCIBLE ON" : "INVINCIBLE OFF");
+    handled = true;
+  }
+
+  if (isActionKey(e)) {
+    if (!keys.action && gameState === "PLAYING") {
+      handleForceAction();
+    }
+    keys.action = true;
+    handled = true;
+  }
+  if (e.code === "Enter") handled = true;
+
+  if (handled) e.preventDefault();
+});
+
+window.addEventListener("keyup", (e) => {
+  if (isUpKey(e)) keys.up = false;
+  if (isDownKey(e)) keys.down = false;
+  if (isLeftKey(e)) keys.left = false;
+  if (isRightKey(e)) keys.right = false;
+  if (isActionKey(e)) keys.action = false;
+});
+
+// ============================================================================
+// 5. ステージ初期化＆開始
+// ============================================================================
+function createForceObject(id, parentType, parentId, contactAngle) {
+  return {
+    id: id,
+    state: "ATTACHED",
+    parentType: parentType,
+    parentId: parentId,
+    contactAngle: contactAngle,
+    x: 0,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    radius: CONFIG.FORCE_RADIUS,
+    rollAngle: 0
+  };
+}
+
+function startGame(stageNum = 1) {
+  currentStage = stageNum;
+  score = (stageNum === 1) ? 0 : score;
+  gameFrame = 0;
+  scrollX = 0;
+  scrollY = 0;
+  nextSpawnDelay = 120;
+  squadSpawnCounter = 0;
+  particles = [];
+  floatingTexts = [];
+  enemies = [];
+  droppedForceItems = [];
+  squads = [];
+
+  if (stageNum === 1) {
+    player.x = 120;
+    player.y = 320;
+    boss.hp = boss.maxHp = CONFIG.BOSS_MAX_HP;
+    boss.x = CONFIG.CANVAS_WIDTH + 180;
+    boss.y = 320;
+  } else if (stageNum === 2) {
+    player.x = 320;
+    player.y = 520;
+    boss.hp = boss.maxHp = CONFIG.BOSS_MAX_HP * 1.2;
+    boss.x = 320;
+    boss.y = -220;
+  } else if (stageNum === 3) {
+    player.x = 120;
+    player.y = 320;
+    boss.hp = boss.maxHp = CONFIG.BOSS_MAX_HP * 1.5;
+    boss.x = CONFIG.CANVAS_WIDTH + 180;
+    boss.y = 320;
+  }
+
+  boss.isActive = false;
+  boss.timer = 0;
+  boss.isCoreOpen = false;
+  player.isDead = false;
+
+  forces = [];
+  const initialAngle = (stageNum === 2) ? -Math.PI / 2 : 0;
+  const initialForce = createForceObject(1, "PLAYER", null, initialAngle);
+  forces.push(initialForce);
+
+  updateAllForcePositions();
+  sounds.startBGM();
+  gameState = "PLAYING";
+}
+
+// ============================================================================
+// 6. 鉄球フォース制御
+// ============================================================================
+function handleForceAction() {
+  if (player.isDead || gameState !== "PLAYING") return;
+
+  const attachedForces = forces.filter(f => f.state === "ATTACHED").sort((a, b) => a.id - b.id);
+
+  if (attachedForces.length > 0) {
+    const targetForce = attachedForces[0];
+    targetForce.state = "LAUNCHING";
+
+    const dirX = Math.cos(targetForce.contactAngle);
+    const dirY = Math.sin(targetForce.contactAngle);
+
+    targetForce.vx = dirX * CONFIG.FORCE_LAUNCH_SPEED;
+    targetForce.vy = dirY * CONFIG.FORCE_LAUNCH_SPEED;
+
+    sounds.playLaunch();
+    createExplosion(targetForce.x, targetForce.y, CONFIG.COLOR_IRON_LIGHT, 8);
+    addFloatingText(targetForce.x, targetForce.y - 14, `LAUNCH #${targetForce.id}`);
+  } else {
+    let anyReturning = false;
+    forces.forEach(f => {
+      if (f.state !== "ATTACHED") {
+        f.state = "RETURNING";
+        anyReturning = true;
+      }
+    });
+    if (anyReturning) {
+      sounds.playLaunch();
+      addFloatingText(player.x, player.y - 30, "RECALL ALL");
+    }
+  }
+}
+
+function updateAllForcePositions() {
+  const attached = forces.filter(f => f.state === "ATTACHED").sort((a, b) => a.id - b.id);
+  const groups = {};
+  attached.forEach(f => {
+    const angleKey = Math.round(f.contactAngle * 10) / 10;
+    if (!groups[angleKey]) groups[angleKey] = [];
+    groups[angleKey].push(f);
+  });
+
+  Object.values(groups).forEach(group => {
+    group.sort((a, b) => a.id - b.id);
+    group.forEach((f, idx) => {
+      const dist = player.radius + f.radius + (idx * (f.radius * 2));
+      f.x = player.x + Math.cos(f.contactAngle) * dist;
+      f.y = player.y + Math.sin(f.contactAngle) * dist;
+    });
+  });
+}
+
+function updateForces() {
+  forces.forEach(f => {
+    f.rollAngle += (f.state === "ATTACHED" ? 0.02 : (f.state === "STAYING" ? 0.03 : 0.08));
+
+    if (f.state === "LAUNCHING") {
+      f.x += f.vx;
+      f.y += f.vy;
+
+      let hitBoundary = false;
+
+      if (f.x > CONFIG.CANVAS_WIDTH - f.radius) {
+        f.x = CONFIG.CANVAS_WIDTH - f.radius - CONFIG.FORCE_BOUNCE_OFFSET;
+        hitBoundary = true;
+      } else if (f.x < f.radius) {
+        f.x = f.radius + CONFIG.FORCE_BOUNCE_OFFSET;
+        hitBoundary = true;
+      }
+      if (f.y > CONFIG.CANVAS_HEIGHT - f.radius) {
+        f.y = CONFIG.CANVAS_HEIGHT - f.radius - CONFIG.FORCE_BOUNCE_OFFSET;
+        hitBoundary = true;
+      } else if (f.y < f.radius) {
+        f.y = f.radius + CONFIG.FORCE_BOUNCE_OFFSET;
+        hitBoundary = true;
+      }
+
+      if (hitBoundary) {
+        f.state = "STAYING";
+        f.vx = 0;
+        f.vy = 0;
+        createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 6);
+        addFloatingText(f.x, f.y - 14, `STAY #${f.id}`);
+      }
+    } else if (f.state === "STAYING") {
+      const distToPlayer = Math.hypot(player.x - f.x, player.y - f.y);
+      if (distToPlayer <= player.radius + f.radius + 3) {
+        f.parentType = "PLAYER";
+        f.parentId = null;
+        f.contactAngle = Math.atan2(f.y - player.y, f.x - player.x);
+        f.state = "ATTACHED";
+        sounds.playDock();
+        createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 10);
+        addFloatingText(f.x, f.y - 16, `DOCK #${f.id}`);
+      }
+    } else if (f.state === "RETURNING") {
+      const dx = player.x - f.x;
+      const dy = player.y - f.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist > 4) {
+        f.x += (dx / dist) * CONFIG.FORCE_RETURN_SPEED;
+        f.y += (dy / dist) * CONFIG.FORCE_RETURN_SPEED;
+      }
+
+      const distToPlayer = Math.hypot(player.x - f.x, player.y - f.y);
+      if (distToPlayer <= player.radius + f.radius + 3) {
+        f.parentType = "PLAYER";
+        f.parentId = null;
+        f.contactAngle = Math.atan2(f.y - player.y, f.x - player.x);
+        f.state = "ATTACHED";
+        sounds.playDock();
+        createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 10);
+        addFloatingText(f.x, f.y - 16, `DOCK #${f.id}`);
+      }
+    }
+  });
+
+  updateAllForcePositions();
+}
+
+// ============================================================================
+// 7. 編隊＆キャリア敵制御
+// ============================================================================
+function getDynamicEnemySpeed() {
+  const stageProgress = scrollX / stageLength;
+  const baseSlow = CONFIG.FLYER_SPEED_BASE;
+  const targetMax = (currentStage === 1) ? 0.85 : (currentStage === 2 ? 1.05 : 1.25);
+  
+  if (stageProgress < 0.25) {
+    return baseSlow;
+  } else {
+    return baseSlow + (targetMax - baseSlow) * Math.min(1.0, (stageProgress - 0.25) / 0.75);
+  }
+}
+
+function updateSquadSpawning() {
+  if (boss.isActive || gameState !== "PLAYING") return;
+
+  if (squads.length === 0 && enemies.length === 0) {
+    nextSpawnDelay--;
+    if (nextSpawnDelay <= 0) {
+      nextSpawnDelay = 220;
+      squadSpawnCounter++;
+
+      const squadId = Date.now() + Math.random();
+      let patternType = "WAVE_BIG";
+      
+      if (squadSpawnCounter <= 2) {
+        patternType = "STRAIGHT";
+      } else {
+        const randType = Math.random();
+        if (currentStage === 2) {
+          patternType = randType < 0.4 ? "STRAIGHT" : (randType < 0.7 ? "VERTICAL_DOWN" : "WAVE_SMALL");
+        } else {
+          patternType = randType < 0.35 ? "STRAIGHT" : (randType < 0.7 ? "WAVE_BIG" : "WAVE_SMALL");
+        }
+      }
+      
+      let startX = CONFIG.CANVAS_WIDTH + 24;
+      let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
+
+      if (currentStage === 2) {
+        if (scrollX < stageLength * 0.5) {
+          startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
+          startY = -24;
+        } else {
+          startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
+          startY = CONFIG.CANVAS_HEIGHT + 24;
+        }
+      }
+
+      const isCarrier = Math.random() < 0.45;
+      const enemyType = isCarrier ? "CARRIER" : "NORMAL";
+
+      squads.push({
+        id: squadId,
+        total: 10,
+        remaining: 10,
+        lastSpawnFrame: gameFrame,
+        spawnedCount: 0,
+        startX: startX,
+        startY: startY,
+        patternType: patternType,
+        enemyType: enemyType
+      });
+    }
+  }
+
+  for (let s of squads) {
+    const stageProgress = scrollX / stageLength;
+    const delay = (stageProgress < 0.3) ? 38 : 28;
+
+    if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
+      s.lastSpawnFrame = gameFrame;
+      s.spawnedCount++;
+
+      enemies.push({
+        squadId: s.id,
+        isSquadMember: true,
+        memberIndex: s.spawnedCount,
+        x: s.startX,
+        y: s.startY,
+        baseX: s.startX,
+        baseY: s.startY,
+        anim: s.spawnedCount * 0.5,
+        patternType: s.patternType,
+        enemyType: s.enemyType,
+        hp: s.enemyType === "CARRIER" ? 3.0 : 2.0,
+        scoreVal: s.enemyType === "CARRIER" ? 250 : 100,
+        radius: s.enemyType === "CARRIER" ? 21 : CONFIG.ENEMY_RADIUS
+      });
+    }
+  }
+}
+
+function updateEnemies() {
+  updateSquadSpawning();
+  const currentSpeed = getDynamicEnemySpeed();
+
+  for (let i = enemies.length - 1; i >= 0; i--) {
+    const e = enemies[i];
+    e.anim += 0.035;
+
+    const squad = squads.find(s => s.id === e.squadId);
+    const speedFactor = (squadSpawnCounter <= 3) ? 0.66 : 1.0;
+    const isFirstFew = (scrollX / stageLength) < 0.25;
+    const actualSpeed = isFirstFew ? currentSpeed * 0.55 * speedFactor : currentSpeed * speedFactor;
+
+    if (e.patternType === "WAVE_BIG") {
+      e.x -= actualSpeed;
+      e.y = e.baseY + Math.sin(e.anim) * 95;
+    } else if (e.patternType === "WAVE_SMALL") {
+      e.x -= actualSpeed * 1.1;
+      e.y = e.baseY + Math.sin(e.anim) * 28;
+    } else if (e.patternType === "STRAIGHT") {
+      e.x -= actualSpeed * 1.4;
+    } else if (e.patternType === "VERTICAL_DOWN") {
+      e.y += actualSpeed * 1.2;
+      e.x = e.baseX + Math.sin(e.anim) * 45;
+    } else if (e.patternType === "VERTICAL_UP") {
+      e.y -= actualSpeed * 1.2;
+      e.x = e.baseX + Math.sin(e.anim) * 45;
+    }
+
+    if (e.x < -80 || e.x > CONFIG.CANVAS_WIDTH + 80 || e.y > CONFIG.CANVAS_HEIGHT + 80 || e.y < -80) {
+      enemies.splice(i, 1);
+      continue;
+    }
+
+    for (let f of forces) {
+      const distToForce = Math.hypot(e.x - f.x, e.y - f.y);
+      if (distToForce < f.radius + e.radius) {
+        e.hp -= 2.5;
+        createExplosion(e.x, e.y, CONFIG.COLOR_IRON_LIGHT, 4);
+        if (e.hp <= 0) {
+          destroyEnemy(i, e);
+          break;
+        }
+      }
+    }
+
+    const distToPlayer = Math.hypot(e.x - player.x, e.y - player.y);
+    if (!isInvincible && distToPlayer < player.radius + e.radius - 8) {
+      killPlayer();
+      break;
+    }
+  }
+
+  for (let i = droppedForceItems.length - 1; i >= 0; i--) {
+    const item = droppedForceItems[i];
+    
+    if (item.stage === "DASHING") {
+      const dx = item.targetX - item.x;
+      const dy = item.targetY - item.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 5) {
+        item.x += (dx / dist) * 18.0;
+        item.y += (dy / dist) * 18.0;
+      } else {
+        item.stage = "SCROLLING";
+      }
+    } else {
+      if (!item.isStationary) {
+        if (currentStage === 2) {
+          if (scrollX < stageLength * 0.5) item.y += CONFIG.SCROLL_SPEED;
+          else item.y -= CONFIG.SCROLL_SPEED;
+        } else {
+          item.x -= CONFIG.SCROLL_SPEED;
+        }
+      }
+    }
+
+    if (item.x < -60 || item.x > CONFIG.CANVAS_WIDTH + 60 || item.y > CONFIG.CANVAS_HEIGHT + 60 || item.y < -60) {
+      droppedForceItems.splice(i, 1);
+      continue;
+    }
+
+    const distToPlayer = Math.hypot(item.x - player.x, item.y - player.y);
+    if (distToPlayer < player.radius + item.radius + 6) {
+      const newId = forces.length + 1;
+      const newForce = createForceObject(newId, "PLAYER", null, Math.PI);
+      newForce.x = item.x;
+      newForce.y = item.y;
+      newForce.state = "RETURNING";
+      forces.push(newForce);
+
+      score += 1500;
+      sounds.playGet();
+      createExplosion(item.x, item.y, "#54a0ff", 30);
+      addFloatingText(player.x, player.y - 45, `GET FORCE #${newId}!`);
+      droppedForceItems.splice(i, 1);
+    }
+  }
+}
+
+function destroyEnemy(index, e) {
+  sounds.playEnemyDestroy();
+  createExplosion(e.x, e.y, e.enemyType === "CARRIER" ? "#ff9ff3" : "#ff6b81", 16);
+  addFloatingText(e.x, e.y - 8, `+${e.scoreVal}`);
+  score += e.scoreVal;
+
+  if (e.isSquadMember) {
+    const squad = squads.find(s => s.id === e.squadId);
+    if (squad) {
+      squad.remaining--;
+      if (squad.remaining <= 0) {
+        squads = squads.filter(sq => sq.id !== e.squadId);
+
+        const nextNum = forces.length + droppedForceItems.length + 1;
+        const targetEdgeX = 350 + Math.random() * 220;
+        const targetEdgeY = 60 + Math.random() * (CONFIG.CANVAS_HEIGHT - 120);
+
+        droppedForceItems.push({
+          x: e.x,
+          y: e.y,
+          targetX: targetEdgeX,
+          targetY: targetEdgeY,
+          stage: "DASHING",
+          isStationary: true,
+          nextId: nextNum,
+          radius: CONFIG.FORCE_RADIUS
+        });
+        sounds.playGet();
+        addFloatingText(e.x, e.y - 24, `FORCE DROP #${nextNum}!`);
+      }
+    }
+  }
+
+  enemies.splice(index, 1);
+}
+
+// ============================================================================
+// 8. 巨大ボス戦
+// ============================================================================
+function updateBoss() {
+  if (!boss.isActive && scrollX >= stageLength) {
+    boss.isActive = true;
+    sounds.playGet();
+    addFloatingText(CONFIG.CANVAS_WIDTH / 2, CONFIG.CANVAS_HEIGHT / 2, "WARNING: ULTIMATE BIO BOSS");
+  }
+
+  if (!boss.isActive) return;
+
+  boss.timer++;
+  boss.legAnim += 0.08;
+
+  if (currentStage === 2) {
+    if (boss.y < 160) boss.y += 0.8;
+  } else {
+    if (boss.x > CONFIG.CANVAS_WIDTH - 180) boss.x -= 0.8;
+  }
+
+  const cycleFrame = boss.timer % CONFIG.BOSS_CORE_CYCLE;
+  boss.isCoreOpen = (cycleFrame > (CONFIG.BOSS_CORE_CYCLE - CONFIG.BOSS_CORE_OPEN_TIME));
+
+  const bossDrawX = boss.x;
+  const bossDrawY = boss.y;
+  
+  const coreX = bossDrawX - (currentStage === 2 ? 0 : 45);
+  const coreY = bossDrawY - (currentStage === 2 ? 40 : 0);
+
+  let totalFrameDamage = 0;
+  forces.forEach(f => {
+    const distToCore = Math.hypot(f.x - coreX, f.y - coreY);
+    if (distToCore < 45 + f.radius) {
+      if (boss.isCoreOpen) {
+        totalFrameDamage += CONFIG.FORCE_DAMAGE_FRAME * 1.5;
+        if (gameFrame % 3 === 0) sounds.playPierceTick();
+        createExplosion(coreX + (Math.random()-0.5)*35, coreY + (Math.random()-0.5)*35, "#ff6b81", 3);
+      } else {
+        totalFrameDamage += CONFIG.FORCE_DAMAGE_BODY;
+        createExplosion(f.x, f.y, "#90a4ae", 1);
+      }
+    } else {
+      const distToBody = Math.hypot(f.x - bossDrawX, f.y - bossDrawY);
+      if (distToBody < boss.radius + f.radius) {
+        totalFrameDamage += CONFIG.FORCE_DAMAGE_BODY;
+        createExplosion(f.x, f.y, "#ff6b81", 1);
+      }
+    }
+  });
+
+  if (totalFrameDamage > 0) {
+    boss.hp -= totalFrameDamage;
+    if (boss.isCoreOpen && gameFrame % 18 === 0) {
+      addFloatingText(coreX, coreY - 30, "CRITICAL PIERCE!");
+    }
+    checkBossDefeat(bossDrawX, bossDrawY);
+  }
+
+  if (!isInvincible && Math.hypot(player.x - bossDrawX, player.y - bossDrawY) < player.radius + boss.radius - 20) {
+    killPlayer();
+  }
+}
+
+function checkBossDefeat(bx, by) {
+  if (boss.hp <= 0 && gameState === "PLAYING") {
+    boss.hp = 0;
+    sounds.playEnemyDestroy();
+    for (let i = 0; i < 110; i++) {
+      createExplosion(bx + (Math.random()-0.5)*200, by + (Math.random()-0.5)*200, "#ff6b81", 5);
+      createExplosion(bx + (Math.random()-0.5)*200, by + (Math.random()-0.5)*200, "#ff9ff3", 5);
+    }
+    score += currentStage * 50000;
+
+    if (currentStage < 3) {
+      sounds.stopBGM();
+      gameState = "STAGE_TRANSITION";
+      transitionTimer = 120;
+    } else {
+      sounds.stopBGM();
+      gameState = "CLEAR";
+    }
+  }
+}
+
+function killPlayer() {
+  if (player.isDead || isInvincible) return;
+  player.isDead = true;
+  sounds.playEnemyDestroy();
+  sounds.stopBGM();
+  sounds.playPlayerDeath();
+  
+  for (let i = 0; i < 4; i++) {
+    setTimeout(() => {
+      createExplosion(player.x + (Math.random()-0.5)*40, player.y + (Math.random()-0.5)*40, "#ff6b81", 20);
+    }, i * 400);
+  }
+
+  gameState = "DYING";
+  deathTimer = 180;
+}
+
+// ============================================================================
+// 9. 自機移動＆スクロール更新
+// ============================================================================
+function movePlayer() {
+  let moveX = 0, moveY = 0;
+  if (keys.up) moveY -= 1;
+  if (keys.down) moveY += 1;
+  if (keys.left) moveX -= 1;
+  if (keys.right) moveX += 1;
+
+  if (moveX !== 0 && moveY !== 0) {
+    moveX *= 0.7071;
+    moveY *= 0.7071;
+  }
+
+  if (!touchActive) {
+    player.x += moveX * CONFIG.PLAYER_SPEED;
+    player.y += moveY * CONFIG.PLAYER_SPEED;
+  }
+
+  player.x = Math.max(player.radius, Math.min(CONFIG.CANVAS_WIDTH - player.radius, player.x));
+  player.y = Math.max(player.radius, Math.min(CONFIG.CANVAS_HEIGHT - player.radius, player.y));
+  player.flameAnim = (player.flameAnim + 0.25) % (Math.PI * 2);
+}
+
+function updateScroll() {
+  if (!boss.isActive) {
+    scrollX += CONFIG.SCROLL_SPEED;
+    if (currentStage === 2) {
+      scrollY = scrollX;
+    }
+  }
+}
+
+function createExplosion(x, y, color = "#ff6b81", count = 15) {
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 0.8 + Math.random() * 3.5;
+    particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size: 2 + Math.random() * 4,
+      color: color,
+      alpha: 1.0,
+      decay: 0.025 + Math.random() * 0.03
+    });
+  }
+}
+
+function addFloatingText(x, y, text) {
+  floatingTexts.push({ x, y, text, alpha: 1.0, vy: -0.7 });
+}
+
+function update() {
+  gameFrame++;
+
+  stars.forEach(s => {
+    if (currentStage === 2) {
+      if (scrollX < stageLength * 0.5) {
+        s.y += s.speed * 1.6 + 0.1;
+        if (s.y > CONFIG.CANVAS_HEIGHT) { s.y = 0; s.x = Math.random() * CONFIG.CANVAS_WIDTH; }
+      } else {
+        s.y -= s.speed * 1.6 + 0.1;
+        if (s.y < 0) { s.y = CONFIG.CANVAS_HEIGHT; s.x = Math.random() * CONFIG.CANVAS_WIDTH; }
+      }
+    } else {
+      s.x -= s.speed + 0.15;
+      if (s.x < 0) { s.x = CONFIG.CANVAS_WIDTH; s.y = Math.random() * CONFIG.CANVAS_HEIGHT; }
+    }
+  });
+
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx; p.y += p.vy; p.alpha -= p.decay;
+    if (p.alpha <= 0) particles.splice(i, 1);
+  }
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const ft = floatingTexts[i];
+    ft.y += ft.vy; ft.alpha -= 0.02;
+    if (ft.alpha <= 0) floatingTexts.splice(i, 1);
+  }
+
+  if (gameState === "DYING") {
+    deathTimer--;
+    if (deathTimer <= 0) {
+      gameState = "GAMEOVER";
+    }
+    return;
+  }
+
+  if (gameState === "STAGE_TRANSITION") {
+    transitionTimer--;
+    if (transitionTimer <= 0) {
+      startGame(currentStage + 1);
+    }
+    return;
+  }
+
+  if (gameState !== "PLAYING") return;
+
+  updateScroll();
+  movePlayer();
+  updateForces();
+  updateEnemies();
+  updateBoss();
+}
+
+// ============================================================================
+// 10. 描画処理 (Render)
+// ============================================================================
+function drawPlayer(x, y) {
+  if (player.isDead && gameState !== "DYING") return;
+  ctx.save();
+  ctx.translate(x, y);
+
+  if (gameState !== "DYING") {
+    const flameLen = 16 + Math.sin(player.flameAnim) * 8;
+    ctx.fillStyle = "#ff6b81";
+    ctx.beginPath();
+    ctx.moveTo(-player.radius + 4, -12);
+    ctx.lineTo(-player.radius - flameLen, 0);
+    ctx.lineTo(-player.radius + 4, 12);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  let playerColor = CONFIG.COLOR_PLAYER;
+  if (isInvincible) {
+    playerColor = (Math.floor(gameFrame / 8) % 2 === 0) ? "#ff9ff3" : "#54a0ff";
+  } else if (gameState === "DYING") {
+    const flashBlink = Math.floor(deathTimer / 12) % 2 === 0;
+    playerColor = flashBlink ? "#ff0000" : "#ffffff";
+  }
+
+  ctx.fillStyle = playerColor;
+  ctx.beginPath();
+  ctx.arc(0, 0, player.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (gameState !== "DYING") {
+    ctx.fillStyle = CONFIG.COLOR_PLAYER_CORE;
+    ctx.beginPath();
+    ctx.arc(15, 0, player.radius * 0.45, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#ff9ff3";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, 0, player.radius - 6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawForce(f) {
+  ctx.save();
+  ctx.translate(f.x, f.y);
+
+  if (f.state === "STAYING") {
+    ctx.fillStyle = "rgba(84, 160, 255, 0.22)";
+    ctx.beginPath();
+    ctx.arc(0, 0, f.radius + 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const grad = ctx.createRadialGradient(
+    -f.radius * 0.35, -f.radius * 0.35, f.radius * 0.1,
+    0, 0, f.radius
+  );
+  grad.addColorStop(0, CONFIG.COLOR_IRON_LIGHT);
+  grad.addColorStop(0.5, CONFIG.COLOR_IRON_BASE);
+  grad.addColorStop(1, CONFIG.COLOR_IRON_DARK);
+
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(0, 0, f.radius, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#ff6b81";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(0, 0, f.radius * 0.7, f.rollAngle, f.rollAngle + Math.PI * 1.5);
+  ctx.stroke();
+
+  ctx.fillStyle = "#ffffff";
+  ctx.shadowColor = "#000000";
+  ctx.shadowBlur = 3;
+  ctx.font = "bold 14px monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(f.id.toString(), 0, 1);
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+}
+
+function drawEnemies() {
+  enemies.forEach(e => {
+    ctx.save();
+    ctx.translate(e.x, e.y);
+
+    if (e.enemyType === "CARRIER") {
+      ctx.fillStyle = "#ffe600";
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#ff6b81";
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = "#ff9ff3";
+      ctx.beginPath();
+      ctx.arc(0, 0, e.radius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#2d3436";
+      ctx.beginPath();
+      ctx.arc(-5, 0, 6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  });
+
+  droppedForceItems.forEach(item => {
+    ctx.save();
+    ctx.translate(item.x, item.y);
+
+    const flash = (Math.sin(gameFrame * 0.3) + 1) / 2;
+    const glowRadius = item.radius + 14 + flash * 10;
+
+    const auraGrad = ctx.createRadialGradient(0, 0, item.radius, 0, 0, glowRadius);
+    auraGrad.addColorStop(0, `rgba(84, 160, 255, ${0.7 + flash * 0.3})`);
+    auraGrad.addColorStop(0.5, `rgba(255, 107, 129, ${0.4 + flash * 0.4})`);
+    auraGrad.addColorStop(1, "rgba(84, 160, 255, 0)");
+    ctx.fillStyle = auraGrad;
+    ctx.beginPath();
+    ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
+    ctx.fill();
+
+    const grad = ctx.createRadialGradient(-6, -6, 2, 0, 0, item.radius);
+    grad.addColorStop(0, flash > 0.5 ? "#ffffff" : "#e0f7fa");
+    grad.addColorStop(0.6, CONFIG.COLOR_IRON_BASE);
+    grad.addColorStop(1, CONFIG.COLOR_IRON_DARK);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, item.radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, item.radius + 3, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = flash > 0.4 ? "#54a0ff" : "#ffffff";
+    ctx.shadowColor = "#54a0ff";
+    ctx.shadowBlur = 12;
+    ctx.font = "bold 14px monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`+${item.nextId}`, 0, 1);
+    ctx.shadowBlur = 0;
+
+    ctx.restore();
+  });
+
+  if (boss.isActive) {
+    const bossDrawX = boss.x;
+    const bossDrawY = boss.y;
+
+    ctx.save();
+    ctx.translate(bossDrawX, bossDrawY);
+
+    ctx.fillStyle = "#7209b7";
+    ctx.beginPath();
+    ctx.ellipse(40, 0, 125, 105, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "#ff6b81";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    for (let i = 1; i <= 4; i++) {
+      const legAngle = boss.legAnim + (i * Math.PI / 2);
+      const tailX = 85 + i * 45 + Math.sin(legAngle) * 20;
+      const tailY = Math.sin(boss.legAnim + i * 0.8) * 60;
+      
+      ctx.fillStyle = "#ff9ff3";
+      ctx.beginPath();
+      ctx.arc(tailX, tailY, 42 - i * 6, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "#3a0ca3";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+
+    const coreX = -45;
+    const coreY = 0;
+
+    if (boss.isCoreOpen) {
+      ctx.fillStyle = "#ff6b81";
+      ctx.shadowColor = "#ff6b81";
+      ctx.shadowBlur = 28;
+      ctx.beginPath();
+      ctx.arc(coreX, coreY, 42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(coreX, coreY, 22, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = "#3f37c9";
+      ctx.beginPath();
+      ctx.arc(coreX, coreY, 42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#54a0ff";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+}
+
+function drawHUD() {
+  ctx.save();
+  ctx.fillStyle = "rgba(15, 16, 32, 0.95)";
+  ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, 52);
+  ctx.strokeStyle = "#ff6b81";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(0, 0, CONFIG.CANVAS_WIDTH, 52);
+
+  ctx.fillStyle = CONFIG.COLOR_HUD_TEXT;
+  ctx.font = "bold 18px monospace";
+  ctx.fillText(`STAGE ${currentStage}`, 18, 32);
+  ctx.fillText(`SCORE: ${score.toString().padStart(6, "0")}`, 155, 32);
+
+  const attachedCount = forces.filter(f => f.state === "ATTACHED").length;
+  ctx.fillText(`FORCES: ${attachedCount}/${forces.length}`, 390, 32);
+  
+  if (isInvincible) {
+    ctx.fillStyle = "#ff6b81";
+    ctx.fillText("[GOD]", 565, 32);
+  }
+
+  if (boss.isActive) {
+    const hpRatio = Math.max(0, boss.hp / boss.maxHp);
+    const bW = 160, bH = 16;
+    const bX = CONFIG.CANVAS_WIDTH - 155, bY = 18;
+    ctx.strokeStyle = "#ff6b81";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(bX, bY, bW, bH);
+    ctx.fillStyle = "#ff6b81";
+    ctx.fillRect(bX + 1, bY + 1, (bW - 2) * hpRatio, bH - 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 12px monospace";
+    ctx.fillText("BOSS HP", bX - 64, 31);
+  }
+
+  ctx.restore();
+}
+
+function drawOverlay() {
+  ctx.save();
+  ctx.textAlign = "center";
+
+  if (gameState === "TITLE") {
+    ctx.fillStyle = "rgba(15, 16, 32, 0.92)";
+    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+    ctx.fillStyle = "#ff6b81";
+    ctx.shadowColor = "#ff9ff3";
+    ctx.shadowBlur = 25;
+    ctx.font = "bold 56px monospace";
+    ctx.fillText("まあるぃタイプ", CONFIG.CANVAS_WIDTH / 2, 210);
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = "#54a0ff";
+    ctx.font = "bold 16px monospace";
+    ctx.fillText("✨ 鉄球オプションがピタリと重なる新感覚シューティング ✨", CONFIG.CANVAS_WIDTH / 2, 275);
+
+    // 💡画面内にも分かりやすい「ゲーム開始ボタン」UIを描画
+    ctx.fillStyle = "#ff6b81";
+    ctx.beginPath();
+    ctx.roundRect(CONFIG.CANVAS_WIDTH / 2 - 160, 315, 320, 60, 30);
+    ctx.fill();
+    ctx.strokeStyle = "#ffe600";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 20px monospace";
+    ctx.fillText("▶ 游戏開始 / スタート", CONFIG.CANVAS_WIDTH / 2, 351);
+
+    ctx.fillStyle = "#e0e6ed";
+    ctx.font = "13px monospace";
+    ctx.fillText("・スマホ: 左半分ドラッグ(移動) / 右半分タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 420);
+    ctx.fillText("・「I」キーで無敵モード切替可能", CONFIG.CANVAS_WIDTH / 2, 450);
+
+    const blink = Math.floor(Date.now() / 400) % 2 === 0;
+    if (blink) {
+      ctx.fillStyle = "#ffe600";
+      ctx.font = "bold 16px monospace";
+      ctx.fillText("[ TAP / CLICK TO PLAY ]", CONFIG.CANVAS_WIDTH / 2, 535);
+    }
+  } else if (gameState === "STAGE_TRANSITION") {
+    ctx.fillStyle = "rgba(15, 16, 32, 0.85)";
+    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+    ctx.fillStyle = "#2ed573";
+    ctx.font = "bold 36px monospace";
+    ctx.fillText(`STAGE ${currentStage} CLEAR!`, CONFIG.CANVAS_WIDTH / 2, 270);
+
+    ctx.fillStyle = "#54a0ff";
+    ctx.font = "18px monospace";
+    ctx.fillText(`WARPING TO STAGE ${currentStage + 1}...`, CONFIG.CANVAS_WIDTH / 2, 330);
+  } else if (gameState === "GAMEOVER") {
+    ctx.fillStyle = "rgba(35, 10, 15, 0.9)";
+    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+    ctx.fillStyle = "#ff6b81";
+    ctx.font = "bold 38px monospace";
+    ctx.fillText("GAME OVER", CONFIG.CANVAS_WIDTH / 2, 240);
+
+    ctx.fillStyle = "#54a0ff";
+    ctx.font = "bold 20px monospace";
+    ctx.fillText(`RETRY STAGE ${currentStage}`, CONFIG.CANVAS_WIDTH / 2, 295);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "15px monospace";
+    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 345);
+
+    const blink = Math.floor(Date.now() / 350) % 2 === 0;
+    if (blink) {
+      ctx.fillStyle = "#ffe66d";
+      ctx.font = "bold 16px monospace";
+      ctx.fillText(`[ TAP / CLICK TO RETRY ]`, CONFIG.CANVAS_WIDTH / 2, 440);
+    }
+  } else if (gameState === "CLEAR") {
+    ctx.fillStyle = "rgba(10, 30, 20, 0.92)";
+    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+
+    ctx.fillStyle = "#2ed573";
+    ctx.font = "bold 38px monospace";
+    ctx.fillText("ALL STAGES CLEARED!", CONFIG.CANVAS_WIDTH / 2, 240);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "16px monospace";
+    ctx.fillText("CONGRATULATIONS!", CONFIG.CANVAS_WIDTH / 2, 300);
+    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 350);
+
+    ctx.fillStyle = "#ff9ff3";
+    ctx.fillText("[ TAP / CLICK TO REPLAY ]", CONFIG.CANVAS_WIDTH / 2, 450);
+  }
+
+  ctx.restore();
+}
+
+function render() {
+  ctx.fillStyle = CONFIG.COLOR_BG;
+  ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
+  stars.forEach(s => {
+    ctx.fillStyle = `rgba(200, 225, 255, ${s.alpha})`;
+    ctx.fillRect(s.x, s.y, s.size, s.size);
+  });
+
+  particles.forEach(p => {
+    ctx.fillStyle = p.color;
+    ctx.globalAlpha = Math.max(0, p.alpha);
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  });
+  ctx.globalAlpha = 1.0;
+
+  floatingTexts.forEach(ft => {
+    ctx.save();
+    ctx.fillStyle = `rgba(255, 230, 109, ${ft.alpha})`;
+    ctx.font = "bold 13px monospace";
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.restore();
+  });
+
+  drawEnemies();
+  drawPlayer(player.x, player.y);
+  forces.forEach(f => drawForce(f));
+  drawHUD();
+  drawOverlay();
+}
+
+function gameLoop() {
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+
+startGame(1);
+requestAnimationFrame(gameLoop);
+</script>
+</body>
+</html>
+
