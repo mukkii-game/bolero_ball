@@ -123,11 +123,10 @@
     <button class="game-btn" id="godBtn">GOD: OFF</button>
   </div>
 
-  <!-- 数値調整モード用パネル -->
   <div id="config-panel">
     <div style="font-weight:bold; margin-bottom:10px; color:#ff9ff3;">⚙ 数値調整モード</div>
     <div class="cfg-row">
-      湧き間隔 (Spawn): <span id="val-spawn">75</span>
+      湧き間隔 (Spawn): <span id="val-spawn">70</span>
       <button class="cfg-btn" onclick="adjustParam('spawn', -15)">-</button>
       <button class="cfg-btn" onclick="adjustParam('spawn', 15)">+</button>
     </div>
@@ -177,7 +176,7 @@ const CONFIG = {
   
   BOSS_CORE_CYCLE: 160,
   BOSS_CORE_OPEN_TIME: 90,
-  BOSS_MAX_HP: 5000,
+  BOSS_MAX_HP: 6000,
   
   MASTER_VOLUME: 0.22,
   
@@ -190,7 +189,7 @@ const CONFIG = {
   COLOR_HUD_TEXT: "#54a0ff"
 };
 
-let spawnIntervalSetting = 75;
+let spawnIntervalSetting = 70;
 
 function toggleConfigPanel() {
   const panel = document.getElementById("config-panel");
@@ -389,8 +388,7 @@ const stars = Array.from({ length: 70 }, () => ({
   alpha: 0.3 + Math.random() * 0.7
 }));
 
-let currentStage = 1;
-let currentWave = 1;
+let currentWave = 1; // 1から6まで
 let waveState = "PLAYING";
 let restTimer = 0;
 let waveAnnouncementTimer = 0;
@@ -399,13 +397,10 @@ let waveAnnouncementText = "";
 let gameState = "TITLE";
 let pauseMenuSelection = 0;
 let scrollX = 0;
-let scrollY = 0;
-let stageLength = 2400;
+let stageLength = 4800; // 6ウェーブ用の長めの一面
 let score = 0;
 let gameFrame = 0;
-let transitionTimer = 0;
-let deathTimer = 0;
-let nextSpawnDelay = 80;
+let nextSpawnDelay = 60;
 let squadSpawnCounter = 0;
 
 let isInvincible = false;
@@ -427,8 +422,9 @@ godBtn.addEventListener("click", (e) => {
 let particles = [];
 let floatingTexts = [];
 let enemies = [];
-let droppedForceItems = [];
+let droppedItems = []; // フォース or スピードアップ
 let squads = [];
+let enemyBullets = [];
 
 const player = {
   x: 120,
@@ -437,21 +433,27 @@ const player = {
   vy: 0,
   radius: CONFIG.PLAYER_RADIUS,
   isDead: false,
-  flameAnim: 0
+  flameAnim: 0,
+  speedBonus: 0 // スピードアップアイテムによるボーナス
 };
 
 let forces = [];
 
 const boss = {
   isActive: false,
-  x: 0,
-  y: 0,
+  x: CONFIG.CANVAS_WIDTH + 180,
+  y: 320,
   hp: CONFIG.BOSS_MAX_HP,
   maxHp: CONFIG.BOSS_MAX_HP,
   timer: 0,
   isCoreOpen: false,
   legAnim: 0,
-  radius: 95
+  radius: 95,
+  moveAngle: 0,
+  dashCooldown: 0,
+  isDashing: false,
+  dashTargetX: 0,
+  dashTargetY: 0
 };
 
 const keys = {
@@ -472,18 +474,18 @@ let rightTouchStartY = 0;
 let rightTouchMoved = false;
 
 // ============================================================================
-// 4. 入力管理 (PC & スマホ対応)
+// 4. 入力管理
 // ============================================================================
 container.addEventListener("contextmenu", e => e.preventDefault());
 
 function triggerGameAction() {
   sounds.init();
   if (gameState === "TITLE") {
-    startGame(1);
+    startGame();
     return;
   }
   if (gameState === "GAMEOVER") {
-    startGame(currentStage);
+    startGame();
     return;
   }
   if (gameState === "CREDITS") {
@@ -721,43 +723,36 @@ function createForceObject(id, parentType, parentId, contactAngle) {
   };
 }
 
-function startGame(stageNum = 1) {
-  currentStage = stageNum;
+function startGame() {
   currentWave = 1;
   waveState = "PLAYING";
   restTimer = 0;
-  score = (stageNum === 1) ? 0 : score;
+  score = 0;
   gameFrame = 0;
   scrollX = 0;
-  scrollY = 0;
-  nextSpawnDelay = 80;
+  nextSpawnDelay = 60;
   squadSpawnCounter = 0;
   particles = [];
   floatingTexts = [];
   enemies = [];
-  droppedForceItems = [];
+  droppedItems = [];
   squads = [];
+  enemyBullets = [];
 
-  triggerAnnouncement("WAVE 1");
+  player.x = 120;
+  player.y = 320;
+  player.speedBonus = 0;
+  player.isDead = false;
 
-  if (stageNum === 1) {
-    player.x = 120;
-    player.y = 320;
-    boss.hp = boss.maxHp = CONFIG.BOSS_MAX_HP;
-    boss.x = CONFIG.CANVAS_WIDTH + 180;
-    boss.y = 320;
-  } else if (stageNum === 2) {
-    player.x = 320;
-    player.y = 520;
-    boss.hp = boss.maxHp = CONFIG.BOSS_MAX_HP * 1.3;
-    boss.x = 320;
-    boss.y = -220;
-  }
-
+  boss.hp = boss.maxHp = CONFIG.BOSS_MAX_HP;
+  boss.x = CONFIG.CANVAS_WIDTH + 180;
+  boss.y = 320;
   boss.isActive = false;
   boss.timer = 0;
   boss.isCoreOpen = false;
-  player.isDead = false;
+  boss.isDashing = false;
+
+  triggerAnnouncement("WAVE 1");
 
   forces = [];
   const initialAngle = 0;
@@ -771,7 +766,7 @@ function startGame(stageNum = 1) {
 
 function triggerAnnouncement(text) {
   waveAnnouncementText = text;
-  waveAnnouncementTimer = 120; // ちょうど2秒間
+  waveAnnouncementTimer = 120; // 2秒間
 }
 
 // ============================================================================
@@ -899,28 +894,24 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. ウェーブ＆敵制御 (Wave 1, 2, 3 + 小休止)
+// 7. 6ウェーブ制 ＆ アイテム・敵管理
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
 
   const progressRatio = scrollX / stageLength;
   
-  if (progressRatio < 0.33) {
-    if (currentWave !== 1 && waveState === "PLAYING") {
-      currentWave = 1;
-    }
-  } else if (progressRatio >= 0.33 && progressRatio < 0.66) {
-    if (currentWave !== 2) {
-      if (waveState === "PLAYING") {
-        triggerWaveRest(2);
-      }
-    }
-  } else if (progressRatio >= 0.66 && progressRatio < 0.95) {
-    if (currentWave !== 3) {
-      if (waveState === "PLAYING") {
-        triggerWaveRest(3);
-      }
+  // 6ウェーブの進行制御 (0~16%, 16~33%, 33~50%, 50~66%, 66~83%, 83~95%)
+  let targetWave = 1;
+  if (progressRatio >= 0.16 && progressRatio < 0.33) targetWave = 2;
+  else if (progressRatio >= 0.33 && progressRatio < 0.50) targetWave = 3;
+  else if (progressRatio >= 0.50 && progressRatio < 0.66) targetWave = 4;
+  else if (progressRatio >= 0.66 && progressRatio < 0.83) targetWave = 5;
+  else if (progressRatio >= 0.83 && progressRatio < 0.96) targetWave = 6;
+
+  if (currentWave !== targetWave) {
+    if (waveState === "PLAYING") {
+      triggerWaveRest(targetWave);
     }
   }
 
@@ -933,55 +924,46 @@ function updateSquadSpawning() {
     return;
   }
 
-  // Waveごとの出現間隔（Wave1は少し間隔を空けてラクにする、編隊の敵数は10機で同一）
-  let effectiveSpawnDelay = spawnIntervalSetting;
-  if (currentWave === 1) {
-    effectiveSpawnDelay = 180;
-  } else if (currentWave === 2) {
-    effectiveSpawnDelay = 110;
-  } else {
-    effectiveSpawnDelay = spawnIntervalSetting;
-  }
+  let effectiveDelay = spawnIntervalSetting;
+  if (currentWave === 1) effectiveDelay = 140;
+  else if (currentWave === 2) effectiveDelay = 100;
+  else if (currentWave >= 3) effectiveDelay = Math.max(35, spawnIntervalSetting - (currentWave * 8));
 
   nextSpawnDelay--;
   if (nextSpawnDelay <= 0) {
-    nextSpawnDelay = effectiveSpawnDelay;
+    nextSpawnDelay = effectiveDelay;
     squadSpawnCounter++;
 
     const squadId = Date.now() + Math.random();
     let patternType = "WAVE_BIG";
-    
-    if (currentWave === 1) {
-      patternType = "STRAIGHT";
-    } else if (squadSpawnCounter <= 2) {
-      patternType = "STRAIGHT";
-    } else {
-      const randType = Math.random();
-      if (currentStage === 2) {
-        patternType = randType < 0.4 ? "STRAIGHT" : (randType < 0.7 ? "VERTICAL_DOWN" : "WAVE_SMALL");
-      } else {
-        patternType = randType < 0.35 ? "STRAIGHT" : (randType < 0.7 ? "WAVE_BIG" : "WAVE_SMALL");
-      }
-    }
-    
     let startX = CONFIG.CANVAS_WIDTH + 24;
     let startY = 120 + Math.random() * (CONFIG.CANVAS_HEIGHT - 240);
 
-    if (currentStage === 2 && Math.random() < 0.5) {
+    // ウェーブごとの特殊挙動 (4:上から, 5:下から, 6:上下左右クロス)
+    if (currentWave === 4) {
       startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
-      startY = Math.random() < 0.5 ? -24 : CONFIG.CANVAS_HEIGHT + 24;
+      startY = -24;
+      patternType = "VERTICAL_DOWN";
+    } else if (currentWave === 5) {
+      startX = 100 + Math.random() * (CONFIG.CANVAS_WIDTH - 200);
+      startY = CONFIG.CANVAS_HEIGHT + 24;
+      patternType = "VERTICAL_UP";
+    } else if (currentWave === 6) {
+      const randDir = Math.random();
+      if (randDir < 0.33) { startX = CONFIG.CANVAS_WIDTH + 24; startY = Math.random() * CONFIG.CANVAS_HEIGHT; patternType = "WAVE_BIG"; }
+      else if (randDir < 0.66) { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = -24; patternType = "VERTICAL_DOWN"; }
+      else { startX = Math.random() * CONFIG.CANVAS_WIDTH; startY = CONFIG.CANVAS_HEIGHT + 24; patternType = "VERTICAL_UP"; }
+    } else {
+      patternType = Math.random() < 0.4 ? "STRAIGHT" : "WAVE_BIG";
     }
 
-    const isCarrier = (currentWave >= 2) && (Math.random() < 0.45);
+    const isCarrier = currentWave >= 2 && Math.random() < 0.5;
     const enemyType = isCarrier ? "CARRIER" : "NORMAL";
-    
-    // 編隊の数（機数）は減らさず、通常の10機でしっかり倒せるようにする
-    const squadTotal = 10;
 
     squads.push({
       id: squadId,
-      total: squadTotal,
-      remaining: squadTotal,
+      total: 8,
+      remaining: 8,
       lastSpawnFrame: gameFrame,
       spawnedCount: 0,
       startX: startX,
@@ -992,9 +974,7 @@ function updateSquadSpawning() {
   }
 
   for (let s of squads) {
-    // 💡すべてのウェーブで他のウェーブと同じ標準の敵間隔（delay=22）を使用し、不自然な隙間をなくす
     const delay = 22;
-
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
       s.lastSpawnFrame = gameFrame;
       s.spawnedCount++;
@@ -1002,7 +982,6 @@ function updateSquadSpawning() {
       enemies.push({
         squadId: s.id,
         isSquadMember: true,
-        memberIndex: s.spawnedCount,
         x: s.startX,
         y: s.startY,
         baseX: s.startX,
@@ -1022,7 +1001,7 @@ function updateSquadSpawning() {
 
 function triggerWaveRest(nextWaveNum) {
   waveState = "REST";
-  restTimer = 120; // 2秒の小休止タイム
+  restTimer = 90; // 1.5秒の小休止
   currentWave = nextWaveNum;
   triggerAnnouncement(`REST / WAVE ${nextWaveNum}`);
 }
@@ -1075,8 +1054,9 @@ function updateEnemies() {
     }
   }
 
-  for (let i = droppedForceItems.length - 1; i >= 0; i--) {
-    const item = droppedForceItems[i];
+  // アイテム更新（フォース or スピードアップ）
+  for (let i = droppedItems.length - 1; i >= 0; i--) {
+    const item = droppedItems[i];
     
     if (item.stage === "DASHING") {
       const dx = item.targetX - item.x;
@@ -1089,35 +1069,53 @@ function updateEnemies() {
         item.stage = "SCROLLING";
       }
     } else {
-      if (!item.isStationary) {
-        if (currentStage === 2) {
-          if (scrollX < stageLength * 0.5) item.y += CONFIG.SCROLL_SPEED;
-          else item.y -= CONFIG.SCROLL_SPEED;
-        } else {
-          item.x -= CONFIG.SCROLL_SPEED;
-        }
-      }
+      item.x -= CONFIG.SCROLL_SPEED;
     }
 
-    if (item.x < -60 || item.x > CONFIG.CANVAS_WIDTH + 60 || item.y > CONFIG.CANVAS_HEIGHT + 60 || item.y < -60) {
-      droppedForceItems.splice(i, 1);
+    if (item.x < -60 || item.x > CONFIG.CANVAS_WIDTH + 60) {
+      droppedItems.splice(i, 1);
       continue;
     }
 
     const distToPlayer = Math.hypot(item.x - player.x, item.y - player.y);
     if (distToPlayer < player.radius + item.radius + 6) {
-      const newId = forces.length + 1;
-      const newForce = createForceObject(newId, "PLAYER", null, Math.PI);
-      newForce.x = item.x;
-      newForce.y = item.y;
-      newForce.state = "RETURNING";
-      forces.push(newForce);
+      if (item.itemType === "SPEED_UP") {
+        player.speedBonus = Math.min(2.5, player.speedBonus + 0.4);
+        score += 1000;
+        sounds.playGet();
+        createExplosion(item.x, item.y, "#ffe600", 25);
+        addFloatingText(player.x, player.y - 45, "SPEED UP!");
+      } else {
+        const newId = forces.length + 1;
+        const newForce = createForceObject(newId, "PLAYER", null, Math.PI);
+        newForce.x = item.x;
+        newForce.y = item.y;
+        newForce.state = "RETURNING";
+        forces.push(newForce);
 
-      score += 1500;
-      sounds.playGet();
-      createExplosion(item.x, item.y, "#54a0ff", 30);
-      addFloatingText(player.x, player.y - 45, `GET FORCE #${newId}!`);
-      droppedForceItems.splice(i, 1);
+        score += 1500;
+        sounds.playGet();
+        createExplosion(item.x, item.y, "#54a0ff", 30);
+        addFloatingText(player.x, player.y - 45, `GET FORCE #${newId}!`);
+      }
+      droppedItems.splice(i, 1);
+    }
+  }
+
+  // 敵の弾更新
+  for (let i = enemyBullets.length - 1; i >= 0; i--) {
+    const b = enemyBullets[i];
+    b.x += b.vx;
+    b.y += b.vy;
+
+    if (b.x < -20 || b.x > CONFIG.CANVAS_WIDTH + 20 || b.y < -20 || b.y > CONFIG.CANVAS_HEIGHT + 20) {
+      enemyBullets.splice(i, 1);
+      continue;
+    }
+
+    if (!isInvincible && Math.hypot(b.x - player.x, b.y - player.y) < player.radius + b.radius - 6) {
+      killPlayer();
+      break;
     }
   }
 }
@@ -1133,22 +1131,25 @@ function destroyEnemy(index, e) {
     if (squad) {
       squad.remaining--;
       if (squad.remaining <= 0) {
-        const nextNum = forces.length + droppedForceItems.length + 1;
         const targetEdgeX = 350 + Math.random() * 220;
         const targetEdgeY = 60 + Math.random() * (CONFIG.CANVAS_HEIGHT - 120);
 
-        droppedForceItems.push({
+        // 3割の確率でスピードアップ、7割の確率でフォース出現
+        const isSpeedItem = Math.random() < 0.3;
+        const nextNum = forces.length + 1;
+
+        droppedItems.push({
           x: e.x,
           y: e.y,
           targetX: targetEdgeX,
           targetY: targetEdgeY,
           stage: "DASHING",
-          isStationary: true,
+          itemType: isSpeedItem ? "SPEED_UP" : "FORCE",
           nextId: nextNum,
           radius: CONFIG.FORCE_RADIUS
         });
         sounds.playGet();
-        addFloatingText(e.x, e.y - 24, `FORCE DROP #${nextNum}!`);
+        addFloatingText(e.x, e.y - 24, isSpeedItem ? "SPEED UP DROP!" : `FORCE DROP #${nextNum}!`);
       }
     }
   }
@@ -1157,7 +1158,7 @@ function destroyEnemy(index, e) {
 }
 
 // ============================================================================
-// 8. 巨大ボス戦
+// 8. 巨大ボス戦 (周囲を動き、弾を撃ち、奥に弱点がある仕様)
 // ============================================================================
 function updateBoss() {
   if (!boss.isActive && scrollX >= stageLength) {
@@ -1171,10 +1172,41 @@ function updateBoss() {
   boss.timer++;
   boss.legAnim += 0.08;
 
-  if (currentStage === 2) {
-    if (boss.y < 160) boss.y += 0.8;
+  // ボスが画面端をうねうね移動 ＆ 時々高速ダッシュ
+  boss.moveAngle += 0.025;
+  if (!boss.isDashing) {
+    boss.x = CONFIG.CANVAS_WIDTH - 150 + Math.sin(boss.moveAngle) * 40;
+    boss.y = 320 + Math.cos(boss.moveAngle * 1.5) * 160;
+
+    if (boss.timer % 220 === 0) {
+      boss.isDashing = true;
+      boss.dashTargetX = 150 + Math.random() * 350;
+      boss.dashTargetY = 100 + Math.random() * 440;
+    }
   } else {
-    if (boss.x > CONFIG.CANVAS_WIDTH - 180) boss.x -= 0.8;
+    const dx = boss.dashTargetX - boss.x;
+    const dy = boss.dashTargetY - boss.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > 8) {
+      boss.x += (dx / dist) * 7.0;
+      boss.y += (dy / dist) * 7.0;
+    } else {
+      boss.isDashing = false;
+    }
+  }
+
+  // ボスが弾を撃つ
+  if (boss.timer % 70 === 0) {
+    const angleToPlayer = Math.atan2(player.y - boss.y, player.x - boss.x);
+    for (let offset of [-0.3, 0, 0.3]) {
+      enemyBullets.push({
+        x: boss.x - 45,
+        y: boss.y,
+        vx: Math.cos(angleToPlayer + offset) * 4.2,
+        vy: Math.sin(angleToPlayer + offset) * 4.2,
+        radius: 6
+      });
+    }
   }
 
   const cycleFrame = boss.timer % CONFIG.BOSS_CORE_CYCLE;
@@ -1183,19 +1215,21 @@ function updateBoss() {
   const bossDrawX = boss.x;
   const bossDrawY = boss.y;
   
-  const coreX = bossDrawX - (currentStage === 2 ? 0 : 45);
-  const coreY = bossDrawY - (currentStage === 2 ? 40 : 0);
+  // 奥深い弱点コアの位置
+  const coreX = bossDrawX - 45;
+  const coreY = bossDrawY;
 
   let totalFrameDamage = 0;
   forces.forEach(f => {
     const distToCore = Math.hypot(f.x - coreX, f.y - coreY);
-    if (distToCore < 45 + f.radius) {
+    if (distToCore < 38 + f.radius) {
       if (boss.isCoreOpen) {
-        totalFrameDamage += CONFIG.FORCE_DAMAGE_FRAME * 1.5;
+        // 奥の弱点に当たると超効果的！
+        totalFrameDamage += CONFIG.FORCE_DAMAGE_FRAME * 2.2;
         if (gameFrame % 3 === 0) sounds.playPierceTick();
-        createExplosion(coreX + (Math.random()-0.5)*35, coreY + (Math.random()-0.5)*35, "#ff6b81", 3);
+        createExplosion(coreX + (Math.random()-0.5)*25, coreY + (Math.random()-0.5)*25, "#ff6b81", 4);
       } else {
-        totalFrameDamage += CONFIG.FORCE_DAMAGE_BODY;
+        totalFrameDamage += CONFIG.FORCE_DAMAGE_BODY * 0.5;
         createExplosion(f.x, f.y, "#90a4ae", 1);
       }
     } else {
@@ -1210,7 +1244,7 @@ function updateBoss() {
   if (totalFrameDamage > 0) {
     boss.hp -= totalFrameDamage;
     if (boss.isCoreOpen && gameFrame % 18 === 0) {
-      addFloatingText(coreX, coreY - 30, "CRITICAL PIERCE!");
+      addFloatingText(coreX, coreY - 30, "CRITICAL CORE HIT!");
     }
     checkBossDefeat(bossDrawX, bossDrawY);
   }
@@ -1224,20 +1258,13 @@ function checkBossDefeat(bx, by) {
   if (boss.hp <= 0 && gameState === "PLAYING") {
     boss.hp = 0;
     sounds.playEnemyDestroy();
-    for (let i = 0; i < 110; i++) {
+    for (let i = 0; i < 120; i++) {
       createExplosion(bx + (Math.random()-0.5)*200, by + (Math.random()-0.5)*200, "#ff6b81", 5);
-      createExplosion(bx + (Math.random()-0.5)*200, by + (Math.random()-0.5)*200, "#ff9ff3", 5);
+      createExplosion(bx + (Math.random()-0.5)*200, by + (Math.random()-0.5)*200, "#ffe600", 5);
     }
-    score += currentStage * 50000;
-
-    if (currentStage < 2) {
-      sounds.stopBGM();
-      gameState = "STAGE_TRANSITION";
-      transitionTimer = 120;
-    } else {
-      sounds.stopBGM();
-      gameState = "CREDITS";
-    }
+    score += 100000;
+    sounds.stopBGM();
+    gameState = "CREDITS"; // スタッフロールへ
   }
 }
 
@@ -1273,9 +1300,11 @@ function movePlayer() {
     moveY *= 0.7071;
   }
 
+  const actualSpeed = CONFIG.PLAYER_SPEED + player.speedBonus;
+
   if (!touchActive) {
-    player.vx = moveX * CONFIG.PLAYER_SPEED;
-    player.vy = moveY * CONFIG.PLAYER_SPEED;
+    player.vx = moveX * actualSpeed;
+    player.vy = moveY * actualSpeed;
     player.x += player.vx;
     player.y += player.vy;
   }
@@ -1291,9 +1320,6 @@ function movePlayer() {
 function updateScroll() {
   if (!boss.isActive) {
     scrollX += CONFIG.SCROLL_SPEED;
-    if (currentStage === 2) {
-      scrollY = scrollX;
-    }
   }
 }
 
@@ -1325,18 +1351,8 @@ function update() {
   }
 
   stars.forEach(s => {
-    if (currentStage === 2) {
-      if (scrollX < stageLength * 0.5) {
-        s.y += s.speed * 1.6 + 0.1;
-        if (s.y > CONFIG.CANVAS_HEIGHT) { s.y = 0; s.x = Math.random() * CONFIG.CANVAS_WIDTH; }
-      } else {
-        s.y -= s.speed * 1.6 + 0.1;
-        if (s.y < 0) { s.y = CONFIG.CANVAS_HEIGHT; s.x = Math.random() * CONFIG.CANVAS_WIDTH; }
-      }
-    } else {
-      s.x -= s.speed + 0.15;
-      if (s.x < 0) { s.x = CONFIG.CANVAS_WIDTH; s.y = Math.random() * CONFIG.CANVAS_HEIGHT; }
-    }
+    s.x -= s.speed + 0.15;
+    if (s.x < 0) { s.x = CONFIG.CANVAS_WIDTH; s.y = Math.random() * CONFIG.CANVAS_HEIGHT; }
   });
 
   for (let i = particles.length - 1; i >= 0; i--) {
@@ -1353,12 +1369,6 @@ function update() {
   if (gameState === "DYING") {
     deathTimer--;
     if (deathTimer <= 0) gameState = "GAMEOVER";
-    return;
-  }
-
-  if (gameState === "STAGE_TRANSITION") {
-    transitionTimer--;
-    if (transitionTimer <= 0) startGame(currentStage + 1);
     return;
   }
 
@@ -1498,46 +1508,46 @@ function drawEnemies() {
     ctx.restore();
   });
 
-  droppedForceItems.forEach(item => {
+  // ドロップアイテム描画
+  droppedItems.forEach(item => {
     ctx.save();
     ctx.translate(item.x, item.y);
 
     const flash = (Math.sin(gameFrame * 0.3) + 1) / 2;
     const glowRadius = item.radius + 14 + flash * 10;
 
+    const isSpeed = item.itemType === "SPEED_UP";
+    const mainColor = isSpeed ? "#ffe600" : "#54a0ff";
+
     const auraGrad = ctx.createRadialGradient(0, 0, item.radius, 0, 0, glowRadius);
-    auraGrad.addColorStop(0, `rgba(84, 160, 255, ${0.7 + flash * 0.3})`);
-    auraGrad.addColorStop(0.5, `rgba(255, 107, 129, ${0.4 + flash * 0.4})`);
-    auraGrad.addColorStop(1, "rgba(84, 160, 255, 0)");
+    auraGrad.addColorStop(0, isSpeed ? `rgba(255, 230, 0, 0.8)` : `rgba(84, 160, 255, 0.8)`);
+    auraGrad.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = auraGrad;
     ctx.beginPath();
     ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    const grad = ctx.createRadialGradient(-6, -6, 2, 0, 0, item.radius);
-    grad.addColorStop(0, flash > 0.5 ? "#ffffff" : "#e0f7fa");
-    grad.addColorStop(0.6, CONFIG.COLOR_IRON_BASE);
-    grad.addColorStop(1, CONFIG.COLOR_IRON_DARK);
-    ctx.fillStyle = grad;
+    ctx.fillStyle = mainColor;
     ctx.beginPath();
     ctx.arc(0, 0, item.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.strokeStyle = "#ffffff";
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, item.radius + 3, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.fillStyle = flash > 0.4 ? "#54a0ff" : "#ffffff";
-    ctx.shadowColor = "#54a0ff";
-    ctx.shadowBlur = 12;
-    ctx.font = "bold 14px monospace";
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 11px monospace";
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(`+${item.nextId}`, 0, 1);
-    ctx.shadowBlur = 0;
+    ctx.fillText(isSpeed ? "SPD" : `+${item.nextId}`, 0, 1);
 
+    ctx.restore();
+  });
+
+  // 敵の弾描画
+  enemyBullets.forEach(b => {
+    ctx.save();
+    ctx.fillStyle = "#ff6b81";
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, b.radius, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
   });
 
@@ -1612,16 +1622,15 @@ function drawHUD() {
 
   ctx.fillStyle = CONFIG.COLOR_HUD_TEXT;
   ctx.font = "bold 18px monospace";
-  ctx.fillText(`STAGE ${currentStage}`, 18, 32);
-  ctx.fillText(`SCORE: ${score.toString().padStart(6, "0")}`, 145, 32);
+  ctx.fillText(`SCORE: ${score.toString().padStart(6, "0")}`, 18, 32);
 
-  const waveStr = waveState === "REST" ? "REST" : `WAVE ${currentWave}`;
+  const waveStr = waveState === "REST" ? "REST" : `WAVE ${currentWave}/6`;
   ctx.fillStyle = waveState === "REST" ? "#ffe600" : "#ff9ff3";
-  ctx.fillText(waveStr, 330, 32);
+  ctx.fillText(waveStr, 245, 32);
 
   const attachedCount = forces.filter(f => f.state === "ATTACHED").length;
   ctx.fillStyle = CONFIG.COLOR_HUD_TEXT;
-  ctx.fillText(`F: ${attachedCount}/${forces.length}`, 465, 32);
+  ctx.fillText(`F: ${attachedCount}/${forces.length}`, 380, 32);
 
   if (boss.isActive) {
     const hpRatio = Math.max(0, boss.hp / boss.maxHp);
@@ -1641,7 +1650,6 @@ function drawOverlay() {
   ctx.save();
   ctx.textAlign = "center";
 
-  // 💡ウェーブ名・REST表示を画面中央にでかく2秒間表示
   if (waveAnnouncementTimer > 0 && gameState === "PLAYING") {
     ctx.save();
     ctx.fillStyle = "rgba(15, 16, 32, 0.85)";
@@ -1687,9 +1695,8 @@ function drawOverlay() {
 
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "12px monospace";
-    ctx.fillText("・PC: WASD/矢印(移動) | N/M/Space(発射) | ESC(ポーズ)", CONFIG.CANVAS_WIDTH / 2, 420);
-    ctx.fillText("・スマホ: 左ドラッグ(移動) | 右タップ(発射)", CONFIG.CANVAS_WIDTH / 2, 445);
-    ctx.fillText("・全2面 / 3段階ウェーブ（小休止タイム付き）", CONFIG.CANVAS_WIDTH / 2, 470);
+    ctx.fillText("・全6ウェーブ（上空・地底・全方位襲撃 ＆ ボス戦）", CONFIG.CANVAS_WIDTH / 2, 420);
+    ctx.fillText("・キャリア撃破でフォース ＆ スピードUP獲得", CONFIG.CANVAS_WIDTH / 2, 445);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
@@ -1716,17 +1723,6 @@ function drawOverlay() {
     ctx.fillStyle = "#ff9ff3";
     ctx.font = "14px monospace";
     ctx.fillText("[ ESCキー または タップで決定 ]", CONFIG.CANVAS_WIDTH / 2, 480);
-  } else if (gameState === "STAGE_TRANSITION") {
-    ctx.fillStyle = "rgba(15, 16, 32, 0.85)";
-    ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
-
-    ctx.fillStyle = "#2ed573";
-    ctx.font = "bold 36px monospace";
-    ctx.fillText(`STAGE ${currentStage} CLEAR!`, CONFIG.CANVAS_WIDTH / 2, 270);
-
-    ctx.fillStyle = "#54a0ff";
-    ctx.font = "18px monospace";
-    ctx.fillText(`WARPING TO STAGE 2...`, CONFIG.CANVAS_WIDTH / 2, 330);
   } else if (gameState === "GAMEOVER") {
     ctx.fillStyle = "rgba(35, 10, 15, 0.9)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
@@ -1737,7 +1733,7 @@ function drawOverlay() {
 
     ctx.fillStyle = "#54a0ff";
     ctx.font = "bold 20px monospace";
-    ctx.fillText(`RETRY STAGE ${currentStage}`, CONFIG.CANVAS_WIDTH / 2, 295);
+    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 295);
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "15px monospace";
@@ -1747,9 +1743,10 @@ function drawOverlay() {
     if (blink) {
       ctx.fillStyle = "#ffe66d";
       ctx.font = "bold 16px monospace";
-      ctx.fillText(`[ TAP / CLICK TO RETRY ]`, CONFIG.CANVAS_WIDTH / 2, 440);
+      ctx.fillText("[ TAP / CLICK TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 440);
     }
   } else if (gameState === "CREDITS") {
+    // 💡スタッフロール画面
     ctx.fillStyle = "rgba(10, 20, 35, 0.96)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
