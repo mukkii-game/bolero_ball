@@ -218,7 +218,6 @@ class SoundSystem {
   constructor() {
     this.ctx = null;
     this.bgmAudio = null;
-    this.unlocked = false;
   }
 
   getBgm() {
@@ -238,17 +237,17 @@ class SoundSystem {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    this.unlocked = true;
+    this.playBGM();
   }
 
   playBGM() {
     const bgm = this.getBgm();
     if (bgm) {
       bgm.volume = 0.35;
-      const playPromise = bgm.play();
-      if (playPromise !== undefined) {
-        playPromise.catch(err => {
-          console.warn("BGM play error:", err);
+      const p = bgm.play();
+      if (p !== undefined) {
+        p.catch(err => {
+          console.warn("BGM auto-play deferred:", err);
         });
       }
     }
@@ -563,7 +562,7 @@ let rightTouchStartY = 0;
 let rightTouchMoved = false;
 
 // ============================================================================
-// 4. 入力管理（Shift / Ctrl / Alt 等の完全除外 ＆ 厳密な操作判定）
+// 4. 入力管理（Ctrlキー完全ブロック版）
 // ============================================================================
 container.addEventListener("contextmenu", e => e.preventDefault());
 
@@ -597,7 +596,6 @@ function triggerGameAction() {
   handleForceAction();
 }
 
-// 💡マウス操作：左クリック(button===0) または 右クリック(button===2) のみ
 container.addEventListener("mousedown", (e) => {
   if (e.target.closest('#config-panel') || e.target === godBtn || e.target.id === 'cfgBtn') return;
   e.preventDefault();
@@ -714,7 +712,6 @@ canvas.addEventListener("touchcancel", (e) => {
   player.vy = 0;
 }, { passive: false });
 
-// 移動キー判定
 function isUpKey(e) {
   return e.code === "KeyW" || e.code === "ArrowUp" || (e.key && e.key.toLowerCase() === "w");
 }
@@ -728,21 +725,15 @@ function isRightKey(e) {
   return e.code === "KeyD" || e.code === "ArrowRight" || (e.key && e.key.toLowerCase() === "d");
 }
 
-// 💡攻撃・決定キー（SpaceまたはEnterのみ）
 function isActionKey(e) {
-  return e.code === "Space" || e.code === "Enter" || e.code === "NumpadEnter" || e.key === " " || e.key === "Enter";
-}
-
-// 💡禁止キー（Shift, Ctrl, Alt, Meta/Windows/Command等）の完全除外
-function isModifierKey(e) {
-  return e.shiftKey || e.ctrlKey || e.altKey || e.metaKey || 
-         e.key === "Shift" || e.key === "Control" || e.key === "Alt" || e.key === "Meta" ||
-         e.code.startsWith("Shift") || e.code.startsWith("Control") || e.code.startsWith("Alt") || e.code.startsWith("Meta");
+  return e.code === "Space" || e.code === "Enter" || e.code === "NumpadEnter";
 }
 
 window.addEventListener("keydown", (e) => {
-  // 💡Shift / Ctrl / Alt / Windowsキーが関与している場合はゲーム入力を完全無視
-  if (isModifierKey(e)) {
+  // 💡Ctrlキー、Cmdキー、Shiftキーなどが押されている場合は絶対にゲーム操作をしない（即リターン）
+  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || 
+      e.code.includes("Control") || e.code.includes("Shift") || e.code.includes("Alt") || e.code.includes("Meta") ||
+      e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta") {
     return;
   }
 
@@ -800,7 +791,6 @@ window.addEventListener("keydown", (e) => {
       toggleGodMode();
       handled = true;
     } else if (isActionKey(e)) {
-      // 💡Space または Enter のみで発射・回収
       if (!keys.action && gameState === "PLAYING") {
         handleForceAction();
       }
@@ -1996,7 +1986,6 @@ function drawHUD() {
   ctx.lineWidth = 2;
   ctx.strokeRect(0, 0, CONFIG.CANVAS_WIDTH, 56);
 
-  // 自機HPアイコン
   for (let h = 0; h < player.maxHp; h++) {
     const iconX = 26 + h * 34;
     const iconY = 28;
@@ -2027,7 +2016,6 @@ function drawHUD() {
     ctx.restore();
   }
 
-  // ボスHPゲージ
   if (boss.isActive && !boss.isDying) {
     const eyeRatio = Math.max(0, boss.eyeHp / boss.eyeMaxHp);
     const tailRatio = Math.max(0, boss.tailHp / boss.tailMaxHp);
@@ -2075,7 +2063,6 @@ function drawOverlay() {
     ctx.fillStyle = "rgba(15, 16, 32, 0.95)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
-    // 巨大極太タイトル
     ctx.save();
     ctx.fillStyle = "#ff6b81";
     ctx.shadowColor = "#ff9ff3";
@@ -2087,7 +2074,6 @@ function drawOverlay() {
     ctx.strokeText("ま～るタイプ", CONFIG.CANVAS_WIDTH / 2, 175);
     ctx.restore();
 
-    // 自機と鉄球のイラスト
     ctx.save();
     const illustX = CONFIG.CANVAS_WIDTH / 2 - 25;
     const illustY = 265;
@@ -2142,7 +2128,6 @@ function drawOverlay() {
     ctx.fillText("1", forceIllustX, forceIllustY + 4);
     ctx.restore();
 
-    // スタートボタン
     ctx.fillStyle = "#ff6b81";
     ctx.beginPath();
     ctx.roundRect(CONFIG.CANVAS_WIDTH / 2 - 160, 345, 320, 56, 28);
@@ -2155,7 +2140,6 @@ function drawOverlay() {
     ctx.font = "bold 20px monospace";
     ctx.fillText("▶ ゲーム開始 / スタート", CONFIG.CANVAS_WIDTH / 2, 380);
 
-    // 操作説明
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "bold 13px monospace";
     ctx.fillText("移動: WASD  発射/回収: Spaceキー", CONFIG.CANVAS_WIDTH / 2, 445);
@@ -2200,7 +2184,7 @@ function drawOverlay() {
 
     ctx.fillStyle = "#54a0ff";
     ctx.font = "bold 20px monospace";
-    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 320);
+    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 340);
 
     const blink = Math.floor(Date.now() / 350) % 2 === 0;
     if (blink) {
