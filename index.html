@@ -390,10 +390,10 @@ const stars = Array.from({ length: 70 }, () => ({
 }));
 
 let currentStage = 1;
-let currentWave = 1; // 1, 2, 3
-let waveState = "PLAYING"; // "PLAYING" or "REST"
+let currentWave = 1;
+let waveState = "PLAYING";
 let restTimer = 0;
-let waveAnnouncementTimer = 0; // 画面中央への2秒間表示用 (120フレーム)
+let waveAnnouncementTimer = 0;
 let waveAnnouncementText = "";
 
 let gameState = "TITLE";
@@ -738,7 +738,6 @@ function startGame(stageNum = 1) {
   droppedForceItems = [];
   squads = [];
 
-  // 開始時にWave 1の文字を大きく中央に2秒間表示
   triggerAnnouncement("WAVE 1");
 
   if (stageNum === 1) {
@@ -772,7 +771,7 @@ function startGame(stageNum = 1) {
 
 function triggerAnnouncement(text) {
   waveAnnouncementText = text;
-  waveAnnouncementTimer = 120; // 120フレーム = ちょうど2秒間
+  waveAnnouncementTimer = 120; // ちょうど2秒間
 }
 
 // ============================================================================
@@ -900,14 +899,13 @@ function updateForces() {
 }
 
 // ============================================================================
-// 7. ウェーブ＆敵制御 (Wave 1, Wave 2, Wave 3 + 小休止タイム)
+// 7. ウェーブ＆敵制御 (Wave 1, 2, 3 + 小休止)
 // ============================================================================
 function updateSquadSpawning() {
   if (boss.isActive || gameState !== "PLAYING") return;
 
   const progressRatio = scrollX / stageLength;
   
-  // Waveの進行判定と小休止タイム（REST）の挿入
   if (progressRatio < 0.33) {
     if (currentWave !== 1 && waveState === "PLAYING") {
       currentWave = 1;
@@ -926,7 +924,6 @@ function updateSquadSpawning() {
     }
   }
 
-  // 小休止タイム中は敵が出現しない
   if (waveState === "REST") {
     restTimer--;
     if (restTimer <= 0) {
@@ -936,14 +933,14 @@ function updateSquadSpawning() {
     return;
   }
 
-  // Waveごとの出現間隔（Wave1はラク、Wave2は中間、Wave3はいまのガンガン）
+  // Waveごとの出現間隔（Wave1は少し間隔を空けてラクにする、編隊の敵数は10機で同一）
   let effectiveSpawnDelay = spawnIntervalSetting;
   if (currentWave === 1) {
-    effectiveSpawnDelay = 180; // ラク（間隔長め）
+    effectiveSpawnDelay = 180;
   } else if (currentWave === 2) {
-    effectiveSpawnDelay = 110; // そのあいだくらい
+    effectiveSpawnDelay = 110;
   } else {
-    effectiveSpawnDelay = spawnIntervalSetting; // いまのガンガン
+    effectiveSpawnDelay = spawnIntervalSetting;
   }
 
   nextSpawnDelay--;
@@ -955,7 +952,7 @@ function updateSquadSpawning() {
     let patternType = "WAVE_BIG";
     
     if (currentWave === 1) {
-      patternType = "STRAIGHT"; // Wave1はシンプルに直線多め
+      patternType = "STRAIGHT";
     } else if (squadSpawnCounter <= 2) {
       patternType = "STRAIGHT";
     } else {
@@ -978,7 +975,7 @@ function updateSquadSpawning() {
     const isCarrier = (currentWave >= 2) && (Math.random() < 0.45);
     const enemyType = isCarrier ? "CARRIER" : "NORMAL";
     
-    // 編隊数（敵の数）は減らさず、倒した時の手応えをしっかり確保 (常に10機)
+    // 編隊の数（機数）は減らさず、通常の10機でしっかり倒せるようにする
     const squadTotal = 10;
 
     squads.push({
@@ -995,8 +992,8 @@ function updateSquadSpawning() {
   }
 
   for (let s of squads) {
-    // Wave1は編隊内の出現間隔も少しゆったりにしてラクに
-    const delay = currentWave === 1 ? 40 : 22;
+    // 💡すべてのウェーブで他のウェーブと同じ標準の敵間隔（delay=22）を使用し、不自然な隙間をなくす
+    const delay = 22;
 
     if (s.spawnedCount < s.total && (gameFrame - s.lastSpawnFrame) >= delay) {
       s.lastSpawnFrame = gameFrame;
@@ -1025,7 +1022,7 @@ function updateSquadSpawning() {
 
 function triggerWaveRest(nextWaveNum) {
   waveState = "REST";
-  restTimer = 120; // 約2秒の小休止タイム
+  restTimer = 120; // 2秒の小休止タイム
   currentWave = nextWaveNum;
   triggerAnnouncement(`REST / WAVE ${nextWaveNum}`);
 }
@@ -1239,7 +1236,7 @@ function checkBossDefeat(bx, by) {
       transitionTimer = 120;
     } else {
       sounds.stopBGM();
-      gameState = "CREDITS"; // スタッフロールへ
+      gameState = "CREDITS";
     }
   }
 }
@@ -1644,19 +1641,19 @@ function drawOverlay() {
   ctx.save();
   ctx.textAlign = "center";
 
-  // 💡ウェーブ切り替え時やREST時に画面中央に大きく2秒間表示する演出
+  // 💡ウェーブ名・REST表示を画面中央にでかく2秒間表示
   if (waveAnnouncementTimer > 0 && gameState === "PLAYING") {
     ctx.save();
-    ctx.fillStyle = "rgba(15, 16, 32, 0.75)";
-    ctx.fillRect(0, 240, CONFIG.CANVAS_WIDTH, 120);
+    ctx.fillStyle = "rgba(15, 16, 32, 0.85)";
+    ctx.fillRect(0, 220, CONFIG.CANVAS_WIDTH, 160);
     ctx.strokeStyle = "#ff6b81";
-    ctx.lineWidth = 3;
-    ctx.strokeRect(0, 240, CONFIG.CANVAS_WIDTH, 120);
+    ctx.lineWidth = 4;
+    ctx.strokeRect(0, 220, CONFIG.CANVAS_WIDTH, 160);
 
     ctx.fillStyle = "#ffe600";
     ctx.shadowColor = "#ff9ff3";
-    ctx.shadowBlur = 20;
-    ctx.font = "bold 46px monospace";
+    ctx.shadowBlur = 25;
+    ctx.font = "bold 52px monospace";
     ctx.fillText(waveAnnouncementText, CONFIG.CANVAS_WIDTH / 2, 315);
     ctx.restore();
   }
@@ -1753,7 +1750,6 @@ function drawOverlay() {
       ctx.fillText(`[ TAP / CLICK TO RETRY ]`, CONFIG.CANVAS_WIDTH / 2, 440);
     }
   } else if (gameState === "CREDITS") {
-    // 💡ご要望のスタッフロール画面
     ctx.fillStyle = "rgba(10, 20, 35, 0.96)";
     ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, CONFIG.CANVAS_HEIGHT);
 
