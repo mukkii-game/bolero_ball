@@ -53,7 +53,7 @@
     }
     #ui-overlay-buttons {
       position: absolute;
-      top: 10px;
+      top: 12px;
       right: 12px;
       z-index: 10;
       display: flex;
@@ -161,6 +161,7 @@ const CONFIG = {
   
   SCROLL_SPEED: 0.45,
   
+  PLAYER_MAX_HP: 5,
   PLAYER_RADIUS: 70,
   PLAYER_SPEED: 3.2,
   
@@ -337,6 +338,22 @@ class SoundSystem {
     noise.stop(t + 0.15);
   }
 
+  playPlayerDamage() {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(220, t);
+    osc.frequency.exponentialRampToValueAtTime(60, t + 0.2);
+    gain.gain.setValueAtTime(CONFIG.MASTER_VOLUME * 1.3, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  }
+
   playPlayerDeath() {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
@@ -418,7 +435,6 @@ let gameState = "TITLE";
 let pauseMenuSelection = 0;
 let scrollX = 0;
 let stageLength = 4800;
-let score = 0;
 let gameFrame = 0;
 let nextSpawnDelay = 60;
 let squadSpawnCounter = 0;
@@ -457,6 +473,9 @@ const player = {
   y: 320,
   vx: 0,
   vy: 0,
+  hp: CONFIG.PLAYER_MAX_HP,
+  maxHp: CONFIG.PLAYER_MAX_HP,
+  invincibleTimer: 0,
   radius: CONFIG.PLAYER_RADIUS,
   isDead: false,
   flameAnim: 0,
@@ -465,12 +484,11 @@ const player = {
 
 let forces = [];
 
-// 💡ボス：滑らかな前進・後退（ワープなし、速度半分）＆ 目としっぽの2箇所弱点
 const boss = {
   isActive: false,
   x: CONFIG.CANVAS_WIDTH + 180,
   y: 320,
-  moveDir: -1, // -1: 前進（左へ）, 1: 後退（右へ）
+  moveDir: -1,
   eyeHp: CONFIG.BOSS_PART_HP,
   eyeMaxHp: CONFIG.BOSS_PART_HP,
   tailHp: CONFIG.BOSS_PART_HP,
@@ -767,7 +785,6 @@ function startGame() {
   currentWave = 1;
   waveState = "PLAYING";
   restTimer = 0;
-  score = 0;
   gameFrame = 0;
   scrollX = 0;
   nextSpawnDelay = 40;
@@ -785,6 +802,9 @@ function startGame() {
 
   player.x = 120;
   player.y = 320;
+  player.hp = CONFIG.PLAYER_MAX_HP;
+  player.maxHp = CONFIG.PLAYER_MAX_HP;
+  player.invincibleTimer = 0;
   player.speedBonus = 0;
   player.isDead = false;
 
@@ -853,18 +873,34 @@ function handleForceAction() {
 function updateAllForcePositions() {
   const attached = forces.filter(f => f.state === "ATTACHED").sort((a, b) => a.id - b.id);
   const groups = {};
+
   attached.forEach(f => {
-    const angleKey = Math.round(f.contactAngle * 10) / 10;
-    if (!groups[angleKey]) groups[angleKey] = [];
-    groups[angleKey].push(f);
+    let matchedKey = null;
+    for (let key in groups) {
+      const angleVal = parseFloat(key);
+      let diff = Math.abs(f.contactAngle - angleVal);
+      while (diff > Math.PI) diff = Math.abs(diff - Math.PI * 2);
+      if (diff < 0.35) {
+        matchedKey = key;
+        break;
+      }
+    }
+
+    if (matchedKey === null) {
+      matchedKey = f.contactAngle.toString();
+      groups[matchedKey] = [];
+    }
+    groups[matchedKey].push(f);
   });
 
-  Object.values(groups).forEach(group => {
+  Object.entries(groups).forEach(([key, group]) => {
+    const angleVal = parseFloat(key);
     group.sort((a, b) => a.id - b.id);
     group.forEach((f, idx) => {
+      f.contactAngle = angleVal;
       const dist = player.radius + f.radius + (idx * (f.radius * 2));
-      f.x = player.x + Math.cos(f.contactAngle) * dist;
-      f.y = player.y + Math.sin(f.contactAngle) * dist;
+      f.x = player.x + Math.cos(angleVal) * dist;
+      f.y = player.y + Math.sin(angleVal) * dist;
     });
   });
 }
@@ -901,29 +937,19 @@ function updateForces() {
         createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 6);
         addFloatingText(f.x, f.y - 14, `STAY #${f.id}`);
       }
-    } else if (f.state === "STAYING") {
-      const distToPlayer = Math.hypot(player.x - f.x, player.y - f.y);
-      if (distToPlayer <= player.radius + f.radius + 3) {
-        f.parentType = "PLAYER";
-        f.parentId = null;
-        f.contactAngle = Math.atan2(f.y - player.y, f.x - player.x);
-        f.state = "ATTACHED";
-        sounds.playDock();
-        createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 10);
-        addFloatingText(f.x, f.y - 16, `DOCK #${f.id}`);
-      }
-    } else if (f.state === "RETURNING") {
-      const dx = player.x - f.x;
-      const dy = player.y - f.y;
-      const dist = Math.hypot(dx, dy);
-
-      if (dist > 4) {
-        f.x += (dx / dist) * CONFIG.FORCE_RETURN_SPEED;
-        f.y += (dy / dist) * CONFIG.FORCE_RETURN_SPEED;
+    } else if (f.state === "STAYING" || f.state === "RETURNING") {
+      if (f.state === "RETURNING") {
+        const dx = player.x - f.x;
+        const dy = player.y - f.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 4) {
+          f.x += (dx / dist) * CONFIG.FORCE_RETURN_SPEED;
+          f.y += (dy / dist) * CONFIG.FORCE_RETURN_SPEED;
+        }
       }
 
       const distToPlayer = Math.hypot(player.x - f.x, player.y - f.y);
-      if (distToPlayer <= player.radius + f.radius + 3) {
+      if (distToPlayer <= player.radius + f.radius + 6) {
         f.parentType = "PLAYER";
         f.parentId = null;
         f.contactAngle = Math.atan2(f.y - player.y, f.x - player.x);
@@ -1114,7 +1140,6 @@ function updateSquadSpawning() {
         patternType: s.patternType,
         enemyType: s.enemyType,
         hpVal: s.enemyType !== "NORMAL" ? 3.0 : 2.0,
-        scoreVal: s.enemyType !== "NORMAL" ? 250 : 100,
         radius: s.enemyType !== "NORMAL" ? 21 : CONFIG.ENEMY_RADIUS
       });
     }
@@ -1128,6 +1153,20 @@ function triggerWaveRest(nextWaveNum) {
   restTimer = 70;
   currentWave = nextWaveNum;
   triggerAnnouncement(`REST / WAVE ${nextWaveNum}`);
+}
+
+function applyPlayerDamage() {
+  if (player.isDead || isInvincible || player.invincibleTimer > 0) return;
+  
+  player.hp--;
+  player.invincibleTimer = 90;
+  sounds.playPlayerDamage();
+  createExplosion(player.x, player.y, "#ff4757", 12);
+  addFloatingText(player.x, player.y - 45, `HIT! HP: ${player.hp}/${player.maxHp}`);
+
+  if (player.hp <= 0) {
+    killPlayer();
+  }
 }
 
 function updateEnemies() {
@@ -1171,9 +1210,31 @@ function updateEnemies() {
     }
 
     const distToPlayer = Math.hypot(e.x - player.x, e.y - player.y);
-    if (!isInvincible && distToPlayer < player.radius + e.radius - 8) {
-      killPlayer();
+    if (distToPlayer < player.radius + e.radius - 8) {
+      applyPlayerDamage();
       break;
+    }
+  }
+
+  // ドロップアイテム同士の重なり防止
+  for (let a = 0; a < droppedItems.length; a++) {
+    for (let b = a + 1; b < droppedItems.length; b++) {
+      const itemA = droppedItems[a];
+      const itemB = droppedItems[b];
+      const dx = itemB.x - itemA.x;
+      const dy = itemB.y - itemA.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = itemA.radius + itemB.radius + 8;
+
+      if (dist < minDist && dist > 0.001) {
+        const overlap = (minDist - dist) / 2;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        itemA.x -= nx * overlap;
+        itemA.y -= ny * overlap;
+        itemB.x += nx * overlap;
+        itemB.y += ny * overlap;
+      }
     }
   }
 
@@ -1203,7 +1264,6 @@ function updateEnemies() {
     if (distToPlayer < player.radius + item.radius + 6) {
       if (item.itemType === "SPEED_UP") {
         player.speedBonus = Math.min(2.5, player.speedBonus + 0.4);
-        score += 1000;
         sounds.playGet();
         createExplosion(item.x, item.y, "#ffe600", 25);
         addFloatingText(player.x, player.y - 50, "SPEED UP !!");
@@ -1215,7 +1275,6 @@ function updateEnemies() {
         newForce.state = "RETURNING";
         forces.push(newForce);
 
-        score += 1500;
         sounds.playGet();
         createExplosion(item.x, item.y, "#54a0ff", 30);
         addFloatingText(player.x, player.y - 50, `FORCE GET !! (#${newId})`);
@@ -1224,7 +1283,6 @@ function updateEnemies() {
     }
   }
 
-  // 💡ボスの弾更新：鉄球（フォース）で弾をかき消せるように実装
   for (let i = enemyBullets.length - 1; i >= 0; i--) {
     const b = enemyBullets[i];
     b.x += b.vx;
@@ -1235,7 +1293,6 @@ function updateEnemies() {
       continue;
     }
 
-    // 💡鉄球による弾の相殺判定
     let blocked = false;
     for (let f of forces) {
       if (Math.hypot(b.x - f.x, b.y - f.y) < f.radius + b.radius + 2) {
@@ -1251,8 +1308,9 @@ function updateEnemies() {
       continue;
     }
 
-    if (!isInvincible && Math.hypot(b.x - player.x, b.y - player.y) < player.radius + b.radius - 6) {
-      killPlayer();
+    if (Math.hypot(b.x - player.x, b.y - player.y) < player.radius + b.radius - 6) {
+      applyPlayerDamage();
+      enemyBullets.splice(i, 1);
       break;
     }
   }
@@ -1261,8 +1319,6 @@ function updateEnemies() {
 function destroyEnemy(index, e) {
   sounds.playEnemyDestroy();
   createExplosion(e.x, e.y, e.enemyType !== "NORMAL" ? "#2ed573" : "#ff6b81", 16);
-  addFloatingText(e.x, e.y - 8, `+${e.scoreVal}`);
-  score += e.scoreVal;
 
   if (e.isSquadMember) {
     const squad = squads.find(s => s.id === e.squadId);
@@ -1275,8 +1331,8 @@ function destroyEnemy(index, e) {
         if (e.enemyType === "FORCE_CARRIER") {
           const nextNum = forces.length + 1;
           droppedItems.push({
-            x: e.x,
-            y: e.y,
+            x: e.x + (Math.random() - 0.5) * 20,
+            y: e.y + (Math.random() - 0.5) * 20,
             targetX: targetEdgeX,
             targetY: targetEdgeY,
             stage: "DASHING",
@@ -1288,8 +1344,8 @@ function destroyEnemy(index, e) {
           addFloatingText(e.x, e.y - 24, `FORCE DROP #${nextNum}!`);
         } else if (e.enemyType === "SPEED_CARRIER") {
           droppedItems.push({
-            x: e.x,
-            y: e.y,
+            x: e.x + (Math.random() - 0.5) * 20,
+            y: e.y + (Math.random() - 0.5) * 20,
             targetX: targetEdgeX,
             targetY: targetEdgeY,
             stage: "DASHING",
@@ -1307,7 +1363,7 @@ function destroyEnemy(index, e) {
 }
 
 // ============================================================================
-// 8. 巨大ボス戦（左端まで前進・ゆっくり後退・3倍弾幕・同じ目玉弱点）
+// 8. 巨大ボス戦
 // ============================================================================
 function updateBoss() {
   if (!boss.isActive && scrollX >= stageLength) {
@@ -1320,33 +1376,28 @@ function updateBoss() {
   boss.timer++;
   boss.legAnim += 0.015;
 
-  // 💡ボスの移動速度は今の半分（0.003125 & 0.35）
   boss.moveAngle += 0.003125;
   boss.y = 320 + Math.sin(boss.moveAngle) * 150;
 
-  // 💡画面左端（180）まで前進し、そこからゆっくり右端（500）まで後退（ワープなし）
   boss.x += boss.moveDir * 0.35;
   if (boss.x <= 180) {
     boss.x = 180;
-    boss.moveDir = 1; // 左端まできたら後退へ
+    boss.moveDir = 1;
   } else if (boss.x >= CONFIG.CANVAS_WIDTH - 140) {
     boss.x = CONFIG.CANVAS_WIDTH - 140;
-    boss.moveDir = -1; // 右端まできたら前進へ
+    boss.moveDir = -1;
   }
 
   const bossDrawX = boss.x;
   const bossDrawY = boss.y;
   
-  const coreX = bossDrawX - 45; // 頭の目玉
+  const coreX = bossDrawX - 45;
   const coreY = bossDrawY;
 
-  // 尻尾の目玉位置
   const tailTipX = bossDrawX + 85 + 4 * 45 + Math.sin(boss.legAnim + 4 * Math.PI / 2) * 20;
   const tailTipY = bossDrawY + Math.sin(boss.legAnim + 4 * 0.8) * 60;
 
-  // 💡ボスの弾幕を3倍に強化（頭と尻尾の両方から広角放射）
   if (boss.timer % 45 === 0) {
-    // 頭の目玉から5方向放射
     if (boss.eyeHp > 0) {
       const angleToPlayer = Math.atan2(player.y - coreY, player.x - coreX);
       for (let offset of [-0.5, -0.25, 0, 0.25, 0.5]) {
@@ -1359,7 +1410,6 @@ function updateBoss() {
         });
       }
     }
-    // 尻尾の目玉から4方向放射
     if (boss.tailHp > 0) {
       const angleToPlayer = Math.atan2(player.y - tailTipY, player.x - tailTipX);
       for (let offset of [-0.4, -0.15, 0.15, 0.4]) {
@@ -1378,7 +1428,6 @@ function updateBoss() {
   boss.isCoreOpen = (cycleFrame > (CONFIG.BOSS_CORE_CYCLE - CONFIG.BOSS_CORE_OPEN_TIME));
 
   forces.forEach(f => {
-    // 💡頭の目玉への当たり判定
     if (boss.eyeHp > 0) {
       const distToEye = Math.hypot(f.x - coreX, f.y - coreY);
       if (distToEye < 38 + f.radius) {
@@ -1395,7 +1444,6 @@ function updateBoss() {
       }
     }
 
-    // 💡尻尾の目玉への当たり判定
     if (boss.tailHp > 0) {
       const distToTail = Math.hypot(f.x - tailTipX, f.y - tailTipY);
       if (distToTail < 38 + f.radius) {
@@ -1417,8 +1465,8 @@ function updateBoss() {
     checkBossDefeat(bossDrawX, bossDrawY);
   }
 
-  if (!isInvincible && Math.hypot(player.x - bossDrawX, player.y - bossDrawY) < player.radius + boss.radius - 20) {
-    killPlayer();
+  if (Math.hypot(player.x - bossDrawX, player.y - bossDrawY) < player.radius + boss.radius - 20) {
+    applyPlayerDamage();
   }
 }
 
@@ -1429,7 +1477,6 @@ function checkBossDefeat(bx, by) {
       createExplosion(bx + (Math.random()-0.5)*200, by + (Math.random()-0.5)*200, "#ff6b81", 5);
       createExplosion(bx + (Math.random()-0.5)*200, by + (Math.random()-0.5)*200, "#ffe600", 5);
     }
-    score += 100000;
     sounds.stopBGM();
     gameState = "CREDITS";
     creditFrame = 0;
@@ -1437,7 +1484,7 @@ function checkBossDefeat(bx, by) {
 }
 
 function killPlayer() {
-  if (player.isDead || isInvincible) return;
+  if (player.isDead) return;
   player.isDead = true;
   sounds.playEnemyDestroy();
   sounds.stopBGM();
@@ -1514,6 +1561,10 @@ function addFloatingText(x, y, text) {
 function update() {
   gameFrame++;
 
+  if (player.invincibleTimer > 0) {
+    player.invincibleTimer--;
+  }
+
   if (waveAnnouncementTimer > 0) {
     waveAnnouncementTimer--;
   }
@@ -1558,6 +1609,11 @@ function update() {
 // ============================================================================
 function drawPlayer(x, y) {
   if (player.isDead && gameState !== "DYING") return;
+  
+  if (player.invincibleTimer > 0 && Math.floor(player.invincibleTimer / 4) % 2 === 0) {
+    return;
+  }
+
   ctx.save();
   ctx.translate(x, y);
 
@@ -1759,11 +1815,9 @@ function drawEnemies() {
     ctx.restore();
   });
 
-  // 💡共通の目玉描画関数（破壊時はまっしろに）
   function drawBossEye(x, y, isOpen, hp) {
     ctx.save();
     if (hp <= 0) {
-      // 💡倒された目玉：まっしろ
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
       ctx.arc(x, y, 36, 0, Math.PI * 2);
@@ -1818,19 +1872,18 @@ function drawEnemies() {
     ctx.lineWidth = 4;
     ctx.stroke();
 
-    // しっぽの関節
     for (let i = 1; i <= 4; i++) {
       const legAngle = boss.legAnim + (i * Math.PI / 2);
       const tailX = 85 + i * 45 + Math.sin(legAngle) * 20;
       const tailY = Math.sin(boss.legAnim + i * 0.8) * 60;
       
-      ctx.fillStyle = "#ff9ff3";
+      ctx.fillStyle = (i === 4 && boss.tailHp <= 0) ? "#576574" : "#ff9ff3";
       ctx.beginPath();
       ctx.arc(tailX, tailY, 42 - i * 5, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.strokeStyle = "#3a0ca3";
-      ctx.lineWidth = 2;
+      ctx.strokeStyle = (i === 4 && boss.tailHp > 0) ? "#54a0ff" : "#3a0ca3";
+      ctx.lineWidth = (i === 4 && boss.tailHp > 0) ? 3 : 2;
       ctx.stroke();
     }
 
@@ -1839,50 +1892,76 @@ function drawEnemies() {
     const tailTipX = 85 + 4 * 45 + Math.sin(boss.legAnim + 4 * Math.PI / 2) * 20;
     const tailTipY = Math.sin(boss.legAnim + 4 * 0.8) * 60;
 
-    // 💡頭の目玉
     drawBossEye(coreX, coreY, boss.isCoreOpen, boss.eyeHp);
-
-    // 💡尻尾の目玉（頭と全く同じ見た目・開閉ギミック・破壊時まっしろ）
     drawBossEye(tailTipX, tailTipY, boss.isCoreOpen, boss.tailHp);
 
     ctx.restore();
   }
 }
 
+// 💡HUD描画（スコア・WAVE・フォース数を全撤廃し、特大HPアイコンと大型ボスHPゲージのみを表示）
 function drawHUD() {
   ctx.save();
   ctx.fillStyle = "rgba(15, 16, 32, 0.95)";
-  ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, 52);
+  ctx.fillRect(0, 0, CONFIG.CANVAS_WIDTH, 56);
   ctx.strokeStyle = "#ff6b81";
   ctx.lineWidth = 2;
-  ctx.strokeRect(0, 0, CONFIG.CANVAS_WIDTH, 52);
+  ctx.strokeRect(0, 0, CONFIG.CANVAS_WIDTH, 56);
 
-  ctx.fillStyle = CONFIG.COLOR_HUD_TEXT;
-  ctx.font = "bold 18px monospace";
-  ctx.fillText(`SCORE: ${score.toString().padStart(6, "0")}`, 18, 32);
+  // 💡自機HP：倍サイズ（半径13px）のミニ自機アイコン
+  for (let h = 0; h < player.maxHp; h++) {
+    const iconX = 26 + h * 34;
+    const iconY = 28;
+    ctx.save();
+    if (h < player.hp) {
+      // 生存HPアイコン（倍サイズミニ自機）
+      ctx.fillStyle = CONFIG.COLOR_PLAYER;
+      ctx.beginPath();
+      ctx.arc(iconX, iconY, 13, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.fillStyle = CONFIG.COLOR_PLAYER_CORE;
+      ctx.beginPath();
+      ctx.arc(iconX + 3, iconY, 6, 0, Math.PI * 2);
+      ctx.fill();
 
-  const waveStr = waveState === "REST" ? "REST" : `WAVE ${currentWave}/6`;
-  ctx.fillStyle = waveState === "REST" ? "#ffe600" : "#ff9ff3";
-  ctx.fillText(waveStr, 230, 32);
+      ctx.strokeStyle = "#ff9ff3";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(iconX, iconY, 11, 0, Math.PI * 2);
+      ctx.stroke();
+    } else {
+      // 損失HPアイコン
+      ctx.strokeStyle = "rgba(255, 107, 129, 0.35)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(iconX, iconY, 13, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
-  const attachedCount = forces.filter(f => f.state === "ATTACHED").length;
-  ctx.fillStyle = CONFIG.COLOR_HUD_TEXT;
-  ctx.fillText(`F: ${attachedCount}/${forces.length}`, 350, 32);
-
+  // 💡ボスHPゲージ：大幅拡大（幅100px・高さ13px・太字フォント）
   if (boss.isActive) {
     const eyeRatio = Math.max(0, boss.eyeHp / boss.eyeMaxHp);
     const tailRatio = Math.max(0, boss.tailHp / boss.tailMaxHp);
     
+    // EYE 1
     ctx.fillStyle = "#ff6b81";
-    ctx.font = "bold 10px monospace";
-    ctx.fillText("EYE 1", 440, 23);
-    ctx.strokeRect(480, 14, 60, 10);
-    ctx.fillRect(481, 15, 58 * eyeRatio, 8);
+    ctx.font = "bold 13px monospace";
+    ctx.fillText("EYE 1", 370, 22);
+    ctx.strokeStyle = "#ff6b81";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(420, 10, 100, 15);
+    ctx.fillRect(421, 11, 98 * eyeRatio, 13);
 
+    // EYE 2
     ctx.fillStyle = "#54a0ff";
-    ctx.fillText("EYE 2", 440, 41);
-    ctx.strokeRect(480, 31, 60, 10);
-    ctx.fillRect(481, 32, 58 * tailRatio, 8);
+    ctx.fillText("EYE 2", 370, 46);
+    ctx.strokeStyle = "#54a0ff";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(420, 34, 100, 15);
+    ctx.fillRect(421, 35, 98 * tailRatio, 13);
   }
 
   ctx.restore();
@@ -1937,8 +2016,8 @@ function drawOverlay() {
 
     ctx.fillStyle = "#e0e6ed";
     ctx.font = "12px monospace";
-    ctx.fillText("・緑: 鉄球追加 / 黄: SPEED UP / 紫: 通常敵", CONFIG.CANVAS_WIDTH / 2, 420);
-    ctx.fillText("・ボスの【2つの目玉】の両方を破壊せよ！", CONFIG.CANVAS_WIDTH / 2, 445);
+    ctx.fillText("・自機HP制（5回被弾で終了）/ 緑: 鉄球追加 / 黄: SPEED UP", CONFIG.CANVAS_WIDTH / 2, 420);
+    ctx.fillText("・ボスの【頭と尻尾の2つの目玉】を両方破壊せよ！", CONFIG.CANVAS_WIDTH / 2, 445);
 
     const blink = Math.floor(Date.now() / 400) % 2 === 0;
     if (blink) {
@@ -1971,21 +2050,17 @@ function drawOverlay() {
 
     ctx.fillStyle = "#ff6b81";
     ctx.font = "bold 38px monospace";
-    ctx.fillText("GAME OVER", CONFIG.CANVAS_WIDTH / 2, 240);
+    ctx.fillText("GAME OVER", CONFIG.CANVAS_WIDTH / 2, 260);
 
     ctx.fillStyle = "#54a0ff";
     ctx.font = "bold 20px monospace";
-    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 295);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "15px monospace";
-    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 345);
+    ctx.fillText("RETRY", CONFIG.CANVAS_WIDTH / 2, 320);
 
     const blink = Math.floor(Date.now() / 350) % 2 === 0;
     if (blink) {
       ctx.fillStyle = "#ffe66d";
       ctx.font = "bold 16px monospace";
-      ctx.fillText("[ TAP / CLICK TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 440);
+      ctx.fillText("[ TAP / CLICK TO RETRY ]", CONFIG.CANVAS_WIDTH / 2, 420);
     }
   } else if (gameState === "CREDITS") {
     ctx.fillStyle = "rgba(10, 20, 35, 0.96)";
@@ -1993,26 +2068,22 @@ function drawOverlay() {
 
     ctx.fillStyle = "#2ed573";
     ctx.font = "bold 44px monospace";
-    ctx.fillText("Congratirations!!", CONFIG.CANVAS_WIDTH / 2, 160);
+    ctx.fillText("Congratirations!!", CONFIG.CANVAS_WIDTH / 2, 180);
 
     ctx.fillStyle = "#ffe600";
     ctx.font = "bold 24px monospace";
-    ctx.fillText("Thank you for playing!", CONFIG.CANVAS_WIDTH / 2, 250);
+    ctx.fillText("Thank you for playing!", CONFIG.CANVAS_WIDTH / 2, 270);
 
     ctx.fillStyle = "#54a0ff";
     ctx.font = "bold 22px monospace";
-    ctx.fillText("Created by mukkii", CONFIG.CANVAS_WIDTH / 2, 350);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "16px monospace";
-    ctx.fillText(`FINAL SCORE: ${score}`, CONFIG.CANVAS_WIDTH / 2, 430);
+    ctx.fillText("Created by mukkii", CONFIG.CANVAS_WIDTH / 2, 370);
 
     if (creditFrame >= 300) {
       const blink = Math.floor(Date.now() / 400) % 2 === 0;
       if (blink) {
         ctx.fillStyle = "#ffe600";
         ctx.font = "bold 20px monospace";
-        ctx.fillText("- PRESS ANY BUTTON -", CONFIG.CANVAS_WIDTH / 2, 515);
+        ctx.fillText("- PRESS ANY BUTTON -", CONFIG.CANVAS_WIDTH / 2, 490);
       }
     }
   }
