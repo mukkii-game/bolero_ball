@@ -218,6 +218,7 @@ class SoundSystem {
   constructor() {
     this.ctx = null;
     this.bgmAudio = null;
+    this.unlocked = false;
   }
 
   getBgm() {
@@ -237,7 +238,7 @@ class SoundSystem {
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume();
     }
-    this.playBGM();
+    this.unlocked = true;
   }
 
   playBGM() {
@@ -247,7 +248,7 @@ class SoundSystem {
       const p = bgm.play();
       if (p !== undefined) {
         p.catch(err => {
-          console.warn("BGM auto-play deferred:", err);
+          console.warn("BGM play error:", err);
         });
       }
     }
@@ -562,7 +563,7 @@ let rightTouchStartY = 0;
 let rightTouchMoved = false;
 
 // ============================================================================
-// 4. 入力管理（Ctrlキー完全ブロック版）
+// 4. 入力管理
 // ============================================================================
 container.addEventListener("contextmenu", e => e.preventDefault());
 
@@ -729,11 +730,14 @@ function isActionKey(e) {
   return e.code === "Space" || e.code === "Enter" || e.code === "NumpadEnter";
 }
 
+function isModifierKey(e) {
+  return e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || 
+         e.code.includes("Control") || e.code.includes("Shift") || e.code.includes("Alt") || e.code.includes("Meta") ||
+         e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta";
+}
+
 window.addEventListener("keydown", (e) => {
-  // 💡Ctrlキー、Cmdキー、Shiftキーなどが押されている場合は絶対にゲーム操作をしない（即リターン）
-  if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || 
-      e.code.includes("Control") || e.code.includes("Shift") || e.code.includes("Alt") || e.code.includes("Meta") ||
-      e.key === "Control" || e.key === "Shift" || e.key === "Alt" || e.key === "Meta") {
+  if (isModifierKey(e)) {
     return;
   }
 
@@ -885,7 +889,7 @@ function triggerAnnouncement(text) {
 }
 
 // ============================================================================
-// 6. 鉄球フォース制御
+// 6. 鉄球フォース制御（弱点中心めり込み停止 ＆ 鉄球同士の重なり防止）
 // ============================================================================
 function handleForceAction() {
   if (player.isDead || gameState !== "PLAYING") return;
@@ -956,6 +960,13 @@ function updateAllForcePositions() {
 }
 
 function updateForces() {
+  const bossDrawX = boss.x;
+  const bossDrawY = boss.y;
+  const coreX = bossDrawX - 45;
+  const coreY = bossDrawY;
+  const tailTipX = bossDrawX + 85 + 4 * 45 + Math.sin(boss.legAnim + 4 * Math.PI / 2) * 20;
+  const tailTipY = bossDrawY + Math.sin(boss.legAnim + 4 * 0.8) * 60;
+
   forces.forEach(f => {
     f.rollAngle += (f.state === "ATTACHED" ? 0.02 : (f.state === "STAYING" ? 0.03 : 0.08));
 
@@ -963,29 +974,65 @@ function updateForces() {
       f.x += f.vx;
       f.y += f.vy;
 
-      let hitBoundary = false;
+      // 💡弱点に当たった時：弱点中心へグッとめり込ませて停止（吸着追従はせず空間静止）
+      if (boss.isActive && !boss.isDying) {
+        let hitEye = (boss.eyeHp > 0 && Math.hypot(f.x - coreX, f.y - coreY) < 45);
+        let hitTail = (boss.tailHp > 0 && Math.hypot(f.x - tailTipX, f.y - tailTipY) < 45);
 
-      if (f.x > CONFIG.CANVAS_WIDTH - f.radius) {
-        f.x = CONFIG.CANVAS_WIDTH - f.radius - CONFIG.FORCE_BOUNCE_OFFSET;
-        hitBoundary = true;
-      } else if (f.x < f.radius) {
-        f.x = f.radius + CONFIG.FORCE_BOUNCE_OFFSET;
-        hitBoundary = true;
-      }
-      if (f.y > CONFIG.CANVAS_HEIGHT - f.radius) {
-        f.y = CONFIG.CANVAS_HEIGHT - f.radius - CONFIG.FORCE_BOUNCE_OFFSET;
-        hitBoundary = true;
-      } else if (f.y < f.radius) {
-        f.y = f.radius + CONFIG.FORCE_BOUNCE_OFFSET;
-        hitBoundary = true;
+        if (hitEye) {
+          const dx = coreX - f.x;
+          const dy = coreY - f.y;
+          const dist = Math.hypot(dx, dy);
+          // 目玉中心から8px手前までめり込ませる
+          const targetDist = 8;
+          if (dist > targetDist) {
+            f.x = coreX - (dx / dist) * targetDist;
+            f.y = coreY - (dy / dist) * targetDist;
+          }
+          f.state = "STAYING";
+          f.vx = 0; f.vy = 0;
+          createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 6);
+          addFloatingText(f.x, f.y - 14, "HIT EYE!");
+        } else if (hitTail) {
+          const dx = tailTipX - f.x;
+          const dy = tailTipY - f.y;
+          const dist = Math.hypot(dx, dy);
+          const targetDist = 8;
+          if (dist > targetDist) {
+            f.x = tailTipX - (dx / dist) * targetDist;
+            f.y = tailTipY - (dy / dist) * targetDist;
+          }
+          f.state = "STAYING";
+          f.vx = 0; f.vy = 0;
+          createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 6);
+          addFloatingText(f.x, f.y - 14, "HIT TAIL!");
+        }
       }
 
-      if (hitBoundary) {
-        f.state = "STAYING";
-        f.vx = 0;
-        f.vy = 0;
-        createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 6);
-        addFloatingText(f.x, f.y - 14, `STAY #${f.id}`);
+      if (f.state === "LAUNCHING") {
+        let hitBoundary = false;
+        if (f.x > CONFIG.CANVAS_WIDTH - f.radius) {
+          f.x = CONFIG.CANVAS_WIDTH - f.radius - CONFIG.FORCE_BOUNCE_OFFSET;
+          hitBoundary = true;
+        } else if (f.x < f.radius) {
+          f.x = f.radius + CONFIG.FORCE_BOUNCE_OFFSET;
+          hitBoundary = true;
+        }
+        if (f.y > CONFIG.CANVAS_HEIGHT - f.radius) {
+          f.y = CONFIG.CANVAS_HEIGHT - f.radius - CONFIG.FORCE_BOUNCE_OFFSET;
+          hitBoundary = true;
+        } else if (f.y < f.radius) {
+          f.y = f.radius + CONFIG.FORCE_BOUNCE_OFFSET;
+          hitBoundary = true;
+        }
+
+        if (hitBoundary) {
+          f.state = "STAYING";
+          f.vx = 0;
+          f.vy = 0;
+          createExplosion(f.x, f.y, CONFIG.COLOR_IRON_LIGHT, 6);
+          addFloatingText(f.x, f.y - 14, `STAY #${f.id}`);
+        }
       }
     } else if (f.state === "STAYING" || f.state === "RETURNING") {
       if (f.state === "RETURNING") {
@@ -1010,6 +1057,29 @@ function updateForces() {
       }
     }
   });
+
+  // 💡STAYING状態の鉄球同士の重なり防止反発処理
+  const stayingForces = forces.filter(f => f.state === "STAYING");
+  for (let a = 0; a < stayingForces.length; a++) {
+    for (let b = a + 1; b < stayingForces.length; b++) {
+      const fa = stayingForces[a];
+      const fb = stayingForces[b];
+      const dx = fb.x - fa.x;
+      const dy = fb.y - fa.y;
+      const dist = Math.hypot(dx, dy);
+      const minDist = fa.radius + fb.radius + 2;
+
+      if (dist < minDist && dist > 0.001) {
+        const overlap = (minDist - dist) / 2;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        fa.x -= nx * overlap;
+        fa.y -= ny * overlap;
+        fb.x += nx * overlap;
+        fb.y += ny * overlap;
+      }
+    }
+  }
 
   updateAllForcePositions();
 }
@@ -1332,6 +1402,7 @@ function updateEnemies() {
     }
   }
 
+  // 💡敵弾の更新：鉄球で防いだ際に爽快な小火花パーティクルを発生（音はなし）
   for (let i = enemyBullets.length - 1; i >= 0; i--) {
     const b = enemyBullets[i];
     b.x += b.vx;
@@ -1346,8 +1417,21 @@ function updateEnemies() {
     for (let f of forces) {
       if (Math.hypot(b.x - f.x, b.y - f.y) < f.radius + b.radius + 2) {
         blocked = true;
-        createExplosion(b.x, b.y, "#54a0ff", 3);
-        if (gameFrame % 4 === 0) sounds.playPierceTick();
+        // 💡小気味よい火花パーティクルをパッと散らす（音は鳴らさない）
+        for (let p = 0; p < 6; p++) {
+          const ang = Math.random() * Math.PI * 2;
+          const spd = 1.0 + Math.random() * 2.8;
+          particles.push({
+            x: b.x,
+            y: b.y,
+            vx: Math.cos(ang) * spd,
+            vy: Math.sin(ang) * spd,
+            size: 1.5 + Math.random() * 2.5,
+            color: Math.random() < 0.5 ? "#54a0ff" : "#ffffff",
+            alpha: 0.9,
+            decay: 0.05 + Math.random() * 0.03
+          });
+        }
         break;
       }
     }
@@ -1412,7 +1496,7 @@ function destroyEnemy(index, e) {
 }
 
 // ============================================================================
-// 8. 巨大ボス戦
+// 8. 巨大ボス戦（ボスの動きに合わせて弱点から外れるゲーム性）
 // ============================================================================
 function updateBoss() {
   if (!boss.isActive && scrollX >= stageLength) {
@@ -1497,6 +1581,7 @@ function updateBoss() {
   const cycleFrame = boss.timer % CONFIG.BOSS_CORE_CYCLE;
   boss.isCoreOpen = (cycleFrame > (CONFIG.BOSS_CORE_CYCLE - CONFIG.BOSS_CORE_OPEN_TIME));
 
+  // 💡鉄球が弱点エリア内にある間、毎フレーム継続ダメージを与える（ボスが動いて離れたら自然に外れる）
   forces.forEach(f => {
     if (boss.eyeHp > 0) {
       const distToEye = Math.hypot(f.x - coreX, f.y - coreY);
@@ -1504,7 +1589,7 @@ function updateBoss() {
         const dmg = boss.isCoreOpen ? CONFIG.FORCE_DAMAGE_FRAME * 2.2 : CONFIG.FORCE_DAMAGE_BODY * 0.5;
         boss.eyeHp -= dmg;
         if (gameFrame % 3 === 0) sounds.playPierceTick();
-        createExplosion(coreX + (Math.random()-0.5)*25, coreY + (Math.random()-0.5)*25, "#ff6b81", 3);
+        createExplosion(coreX + (Math.random()-0.5)*25, coreY + (Math.random()-0.5)*25, "#ff6b81", 2);
         if (boss.eyeHp <= 0) {
           boss.eyeHp = 0;
           sounds.playEnemyDestroy();
@@ -1520,7 +1605,7 @@ function updateBoss() {
         const dmg = boss.isCoreOpen ? CONFIG.FORCE_DAMAGE_FRAME * 2.2 : CONFIG.FORCE_DAMAGE_BODY * 0.5;
         boss.tailHp -= dmg;
         if (gameFrame % 3 === 0) sounds.playPierceTick();
-        createExplosion(tailTipX + (Math.random()-0.5)*25, tailTipY + (Math.random()-0.5)*25, "#ff6b81", 3);
+        createExplosion(tailTipX + (Math.random()-0.5)*25, tailTipY + (Math.random()-0.5)*25, "#ff6b81", 2);
         if (boss.tailHp <= 0) {
           boss.tailHp = 0;
           sounds.playEnemyDestroy();
